@@ -1,6 +1,7 @@
 ;;; pi-core.scm - Pure Steel logic for pi coding agent (no helix dependencies)
 ;;;
 ;;; This module contains all testable logic:
+;;;   - Session state management
 ;;;   - Event parsing and handling
 ;;;   - RPC message construction  
 ;;;   - Output text formatting
@@ -9,8 +10,11 @@
 ;;; Helix-specific operations are injected via callbacks.
 
 (provide
-  ;; Callback setters
-  pi-set-callbacks!
+  ;; Session management
+  make-pi-session
+  pi-session?
+  pi-session-streaming?
+  pi-session-reset!
   
   ;; Event handling
   pi-handle-event
@@ -18,6 +22,8 @@
   ;; RPC construction
   pi-make-prompt-request
   pi-make-abort-request
+  pi-make-follow-up-request
+  pi-make-steer-request
   
   ;; Session file utilities
   path-to-session-dir-name
@@ -25,93 +31,155 @@
   parse-session-file-events
   format-session-history)
 
-;;; ============ Callbacks ============
-;;; These are injected by the helix layer
+;;; ============ Session State ============
+;;; All mutable state is encapsulated in a single struct
 
-(define *cb-append-output* #f)    ; (lambda (text) ...)
-(define *cb-set-status* #f)       ; (lambda (msg) ...)
-(define *cb-on-unknown-event* #f) ; (lambda (type) ...)
+(struct pi-session
+  (streaming?        ; #t if currently streaming
+   pending-requests  ; hash of id -> command  
+   request-counter   ; for generating unique IDs
+   tool-output-lens  ; hash of tool-call-id -> output length seen
+   ;; Callbacks (injected by helix layer)
+   cb-append-output  ; (lambda (text) ...)
+   cb-set-status     ; (lambda (msg) ...)
+   cb-on-unknown     ; (lambda (type) ...)
+   ) #:mutable)
 
-(define (pi-set-callbacks! #:append-output append-output
-                           #:set-status set-status
-                           #:on-unknown-event [on-unknown-event #f])
-  (set! *cb-append-output* append-output)
-  (set! *cb-set-status* set-status)
-  (set! *cb-on-unknown-event* (or on-unknown-event (lambda (t) #f))))
+(define (make-pi-session #:append-output append-output
+                         #:set-status set-status
+                         #:on-unknown-event [on-unknown #f])
+  "Create a fresh session with injected callbacks."
+  (pi-session #f                              ; not streaming
+              (hash)                          ; no pending requests
+              0                               ; request counter
+              (hash)                          ; no tool output
+              append-output
+              set-status
+              (or on-unknown (lambda (t) #f))))
 
-;; Safe callback invocation
-(define (append-output! text)
-  (when *cb-append-output*
-    (*cb-append-output* text)))
+(define (pi-session-reset! session)
+  "Reset session state (but keep callbacks)."
+  (set-pi-session-streaming?! session #f)
+  (set-pi-session-pending-requests! session (hash))
+  (set-pi-session-tool-output-lens! session (hash)))
 
-(define (set-status! msg)
-  (when *cb-set-status*
-    (*cb-set-status* msg)))
+;; Helper accessors for callbacks
+(define (session-append-output! session text)
+  (let ([cb (pi-session-cb-append-output session)])
+    (when cb (cb text))))
+
+(define (session-set-status! session msg)
+  (let ([cb (pi-session-cb-set-status session)])
+    (when cb (cb msg))))
+
+;;; ============ Request ID Generation ============
+
+(define (next-request-id! session)
+  (let ([counter (+ 1 (pi-session-request-counter session))])
+    (set-pi-session-request-counter! session counter)
+    (string-append "req_" (number->string counter))))
+
+(define (register-pending! session id command)
+  (set-pi-session-pending-requests! session
+    (hash-insert (pi-session-pending-requests session) id command)))
+
+(define (resolve-pending! session id)
+  "Resolve and remove a pending request. Returns command or #f."
+  (let* ([pending (pi-session-pending-requests session)]
+         [command (hash-try-get pending id)])
+    (when command
+      (set-pi-session-pending-requests! session
+        (hash-insert pending id #f)))
+    command))
 
 ;;; ============ Event Handling ============
 
-(define (pi-handle-event event)
+(define (pi-handle-event session event)
   "Handle a parsed RPC event. Returns #t if handled, #f otherwise."
   (let ([type (hash-try-get event 'type)])
     (cond
       ;; Agent lifecycle
       [(equal? type "agent_start")
-       (set-status! "pi: streaming...")
+       (set-pi-session-streaming?! session #t)
+       (session-set-status! session "pi: streaming...")
        #t]
       
       [(equal? type "agent_end")
-       (append-output! "\n\n")
-       (set-status! "pi: idle")
+       (set-pi-session-streaming?! session #f)
+       (session-append-output! session "\n\n")
+       (session-set-status! session "pi: idle")
        #t]
       
       ;; Message lifecycle  
       [(equal? type "message_start")
-       (handle-message-start event)
+       (handle-message-start session event)
        #t]
       
       [(equal? type "message_update")
-       (handle-message-update event)
+       (handle-message-update session event)
        #t]
       
       [(equal? type "message_end")
-       (handle-message-end event)
+       (handle-message-end session event)
        #t]
       
       ;; Tool execution
       [(equal? type "tool_execution_start")
-       (handle-tool-start event)
+       (handle-tool-start session event)
        #t]
       
       [(equal? type "tool_execution_update")
-       (handle-tool-update event)
+       (handle-tool-update session event)
        #t]
       
       [(equal? type "tool_execution_end")
-       (handle-tool-end event)
+       (handle-tool-end session event)
        #t]
       
       ;; Lifecycle events (ignore)
       [(equal? type "turn_start") #t]
       [(equal? type "turn_end") #t]
-      [(equal? type "response") #t]
+      
+      ;; Error events - critical for detecting stream failures
+      [(equal? type "error")
+       (handle-error-event session event)
+       #t]
+      
+      [(equal? type "extension_error")
+       (handle-extension-error session event)
+       #t]
+      
+      ;; Auto-retry events - inform user of transient errors
+      [(equal? type "auto_retry_start")
+       (handle-auto-retry-start session event)
+       #t]
+      
+      [(equal? type "auto_retry_end")
+       (handle-auto-retry-end session event)
+       #t]
+      
+      ;; RPC responses - handle errors
+      [(equal? type "response")
+       (handle-response session event)
+       #t]
       
       [else 
-       (when *cb-on-unknown-event*
-         (*cb-on-unknown-event* type))
+       (let ([cb (pi-session-cb-on-unknown session)])
+         (when cb (cb type)))
        #f])))
 
-(define (handle-message-start event)
+(define (handle-message-start session event)
   (let ([msg (hash-try-get event 'message)])
     (when msg
       (let ([role (hash-try-get msg 'role)])
         (cond
           [(equal? role "user")
-           (append-output! "## You\n\n")]
+           (session-append-output! session "## You\n\n")]
           [(equal? role "assistant")
-           (append-output! "## Assistant\n\n")]
+           (session-append-output! session "## Assistant\n\n")]
           [else #f])))))
 
-(define (handle-message-update event)
+(define (handle-message-update session event)
   (let ([evt (hash-try-get event 'assistantMessageEvent)])
     (when evt
       (let ([evt-type (hash-try-get evt 'type)]
@@ -119,17 +187,17 @@
         (cond
           ;; Text content - stream directly
           [(equal? evt-type "text_delta")
-           (when delta (append-output! delta))]
+           (when delta (session-append-output! session delta))]
           ;; Thinking content - show with visual marker
           [(equal? evt-type "thinking_start")
-           (append-output! "<thinking>\n")]
+           (session-append-output! session "<thinking>\n")]
           [(equal? evt-type "thinking_delta")
-           (when delta (append-output! delta))]
+           (when delta (session-append-output! session delta))]
           [(equal? evt-type "thinking_end")
-           (append-output! "\n</thinking>\n\n")]
+           (session-append-output! session "\n</thinking>\n\n")]
           [else #f])))))
 
-(define (handle-message-end event)
+(define (handle-message-end session event)
   (let ([msg (hash-try-get event 'message)])
     (when msg
       (let ([role (hash-try-get msg 'role)])
@@ -138,19 +206,17 @@
             (when content
               (for-each (lambda (part)
                           (when (equal? (hash-try-get part 'type) "text")
-                            (append-output! (hash-try-get part 'text))
-                            (append-output! "\n\n")))
+                            (session-append-output! session (hash-try-get part 'text))
+                            (session-append-output! session "\n\n")))
                         content))))))))
 
-(define (handle-tool-start event)
+(define (handle-tool-start session event)
   (let ([tool-name (hash-try-get event 'toolName)])
     (when tool-name
-      (append-output! (string-append "\n**" (to-string tool-name) "**\n```\n")))))
+      (session-append-output! session 
+        (string-append "\n**" (to-string tool-name) "**\n```\n")))))
 
-;; Track last output length to compute deltas from accumulated results
-(define *tool-output-lengths* (hash))
-
-(define (handle-tool-update event)
+(define (handle-tool-update session event)
   "Handle streaming tool output. partialResult contains accumulated output."
   (let ([tool-call-id (hash-try-get event 'toolCallId)]
         [partial-result (hash-try-get event 'partialResult)])
@@ -158,27 +224,28 @@
       (let ([content (hash-try-get partial-result 'content)])
         (when content
           (let* ([text (extract-text-from-content content)]
-                 [prev-len (or (hash-try-get *tool-output-lengths* tool-call-id) 0)]
+                 [lens (pi-session-tool-output-lens session)]
+                 [prev-len (or (hash-try-get lens tool-call-id) 0)]
                  [new-len (string-length text)])
             (when (> new-len prev-len)
-              (append-output! (substring text prev-len new-len))
-              (set! *tool-output-lengths* 
-                    (hash-insert *tool-output-lengths* tool-call-id new-len)))))))))
+              (session-append-output! session (substring text prev-len new-len))
+              (set-pi-session-tool-output-lens! session
+                (hash-insert lens tool-call-id new-len)))))))))
 
-(define (handle-tool-end event)
+(define (handle-tool-end session event)
   "Handle tool completion. Show any final content not yet displayed."
   (let ([tool-call-id (hash-try-get event 'toolCallId)]
         [result (hash-try-get event 'result)])
-    ;; If we have result content, show any text not yet streamed
     (when (and tool-call-id result)
       (let ([content (hash-try-get result 'content)])
         (when content
           (let* ([text (extract-text-from-content content)]
-                 [prev-len (or (hash-try-get *tool-output-lengths* tool-call-id) 0)]
+                 [lens (pi-session-tool-output-lens session)]
+                 [prev-len (or (hash-try-get lens tool-call-id) 0)]
                  [new-len (string-length text)])
             (when (> new-len prev-len)
-              (append-output! (substring text prev-len new-len))))))))
-  (append-output! "```\n\n"))
+              (session-append-output! session (substring text prev-len new-len))))))))
+  (session-append-output! session "```\n\n"))
 
 (define (extract-text-from-content content)
   "Extract concatenated text from content array."
@@ -190,24 +257,107 @@
                             #f))
                       content))))
 
+(define (handle-error-event session event)
+  "Handle error events from the agent stream."
+  (let ([reason (hash-try-get event 'reason)]
+        [error-msg (hash-try-get event 'error)])
+    (set-pi-session-streaming?! session #f)
+    (session-append-output! session 
+      (string-append "\n**Error**: " (or error-msg reason "Unknown error") "\n\n"))
+    (session-set-status! session 
+      (string-append "pi: error - " (or reason "unknown")))))
+
+(define (handle-extension-error session event)
+  "Handle extension error events."
+  (let ([error-msg (hash-try-get event 'error)]
+        [ext-path (hash-try-get event 'extensionPath)])
+    (session-append-output! session 
+      (string-append "\n**Extension Error**"
+                     (if ext-path (string-append " (" ext-path ")") "")
+                     ": " (or error-msg "Unknown error") "\n\n"))
+    (session-set-status! session "pi: extension error")))
+
+(define (handle-auto-retry-start session event)
+  "Handle auto-retry start - inform user of transient error."
+  (let ([error-msg (hash-try-get event 'errorMessage)]
+        [attempt (hash-try-get event 'attempt)]
+        [max-attempts (hash-try-get event 'maxAttempts)])
+    (session-append-output! session 
+      (string-append "\n*Retrying ("
+                     (if attempt (number->string attempt) "?")
+                     "/"
+                     (if max-attempts (number->string max-attempts) "?")
+                     "): " (or error-msg "transient error") "*\n"))
+    (session-set-status! session "pi: retrying...")))
+
+(define (handle-auto-retry-end session event)
+  "Handle auto-retry end."
+  (let ([success (hash-try-get event 'success)]
+        [final-error (hash-try-get event 'finalError)])
+    (if success
+        (session-set-status! session "pi: retry succeeded")
+        (begin
+          (set-pi-session-streaming?! session #f)
+          (session-append-output! session 
+            (string-append "\n**Retry Failed**: " (or final-error "Max retries exceeded") "\n\n"))
+          (session-set-status! session "pi: retry failed")))))
+
+(define (handle-response session event)
+  "Handle RPC response events - surface errors to user."
+  (let* ([success (hash-try-get event 'success)]
+         [command (hash-try-get event 'command)]
+         [error-msg (hash-try-get event 'error)]
+         [id (hash-try-get event 'id)]
+         [correlated-cmd (if id (resolve-pending! session id) #f)]
+         [effective-cmd (or command correlated-cmd)])
+    (cond
+      [(not success)
+       (set-pi-session-streaming?! session #f)
+       (let ([error-context (if effective-cmd
+                                (string-append " (" effective-cmd ")")
+                                "")])
+         (session-append-output! session 
+           (string-append "\n**Error" error-context "**: " 
+                          (or error-msg "Unknown error") "\n\n"))
+         (session-set-status! session 
+           (string-append "pi: error - " (or error-msg "unknown"))))]
+      [(equal? effective-cmd "abort")
+       (set-pi-session-streaming?! session #f)
+       (session-set-status! session "pi: aborted")]
+      [else #f])))
+
 ;;; ============ RPC Message Construction ============
 
-(define *request-counter* 0)
-
-(define (next-request-id)
-  (set! *request-counter* (+ *request-counter* 1))
-  (string-append "req_" (number->string *request-counter*)))
-
-(define (pi-make-prompt-request message)
+(define (pi-make-prompt-request session message)
   "Create a prompt RPC request hash."
-  (hash "type" "prompt" 
-        "message" message 
-        "id" (next-request-id)))
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "prompt")
+    (hash "type" "prompt" 
+          "message" message 
+          "id" id)))
 
-(define (pi-make-abort-request)
+(define (pi-make-abort-request session)
   "Create an abort RPC request hash."
-  (hash "type" "abort"
-        "id" (next-request-id)))
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "abort")
+    (hash "type" "abort"
+          "id" id)))
+
+(define (pi-make-follow-up-request session message)
+  "Create a follow_up RPC request (queued until agent idle)."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "follow_up")
+    (hash "type" "follow_up"
+          "message" message
+          "id" id)))
+
+(define (pi-make-steer-request session message)
+  "Create a steer RPC request (interrupts current operation)."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "steer")
+    (hash "type" "steer"
+          "message" message
+          "id" id)))
 
 ;;; ============ Session File Utilities ============
 

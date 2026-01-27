@@ -154,22 +154,22 @@ This allows matching errors to specific commands.
 
 ## Implementation Order
 
-1. **Phase 1: Error visibility** (critical)
+1. **Phase 1: Error visibility** (critical) ✅ DONE
    - Handle response events
    - Show errors to user
    - ~20 lines changed
 
-2. **Phase 2: State tracking** (important)
+2. **Phase 2: State tracking** (important) ✅ DONE
    - Track streaming state
    - Prevent conflicts
    - ~15 lines changed
 
-3. **Phase 3: Queue support** (nice-to-have)
+3. **Phase 3: Queue support** (nice-to-have) ✅ DONE
    - Add follow_up/steer commands
    - Smart send behavior
    - ~30 lines changed
 
-4. **Phase 4: Full correlation** (optional)
+4. **Phase 4: Full correlation** (optional) ✅ DONE
    - Track pending requests
    - Match responses to commands
    - ~25 lines changed
@@ -198,10 +198,40 @@ ANTHROPIC_API_KEY= pi --mode rpc --no-session
 # Should queue and execute after first completes
 ```
 
+## Bug Fixes
+
+### 1. State Reset on Session Start/Quit/Process End
+
+**Problem**: Streaming state (`*pi-is-streaming*`) was not reset when:
+1. Starting a new session (carried over from previous session)
+2. User calls `:pi-quit`
+3. Pi process terminates unexpectedly
+
+**Fix**: Added `pi-reset-state!` function and call it:
+- In `pi-spawn-process` before starting new session
+- In `pi-quit` before setting status
+- In event loop when EOF detected (process ended)
+
+### 2. Missing `error` Event Handler
+
+**Problem**: When the agent stream failed (API timeout, rate limit, etc.), pi sent an `error` event that we ignored, leaving the UI stuck at "pi: streaming...".
+
+**Fix**: Added handlers for error-related events:
+- `error` - Stream error (aborted, timeout, etc.)
+- `extension_error` - Extension threw an error  
+- `auto_retry_start` - Transient error, retrying
+- `auto_retry_end` - Retry completed (success or final failure)
+
+### 3. Missing stderr Capture
+
+**Problem**: If pi crashed or logged errors to stderr, we never saw them.
+
+**Fix**: Added `with-stderr-piped` and `pi-stderr-loop` to capture and display stderr output.
+
 ## Files Changed
 
 | File | Changes |
 |------|---------|
-| `src/pi-core.scm` | Add response handling, state tracking, new RPC constructors |
-| `src/pi.scm` | Update pi-send for streaming awareness |
-| `tests/pi-core-test.scm` | Add tests for response handling |
+| `src/pi-core.scm` | Add response handling, state tracking, new RPC constructors, `pi-reset-state!` |
+| `src/pi.scm` | Update pi-send for streaming awareness, reset state on quit/EOF |
+| `tests/pi-core-test.scm` | Add tests for response handling and state reset |
