@@ -265,6 +265,34 @@
             dirs)))
       '()))
 
+;; Convert a path like /home/jack/git/helix-pi to session dir name --home-jack-git-helix-pi--
+(define (path-to-session-dir-name path)
+  (string-append "--" (string-replace (substring path 1 (string-length path)) "/" "-") "--"))
+
+;; List sessions for a specific directory (returns list of (display-name . file-path) pairs)
+(define (list-sessions-for-cwd)
+  (let* ([cwd (current-directory)]
+         [session-dir-name (path-to-session-dir-name cwd)]
+         [session-dir (string-append (pi-sessions-dir) "/" session-dir-name)])
+    (if (path-exists? session-dir)
+        (let ([files (read-dir session-dir)])
+          (let ([jsonl-files (filter (lambda (f) (ends-with? f ".jsonl")) files)])
+            ;; Sort newest first, extract display names from filenames
+            (let ([sorted (sort jsonl-files string>?)])
+              (map (lambda (f)
+                     ;; Extract timestamp from filename like "2026-01-27T09-15-26-031Z_uuid.jsonl"
+                     (let* ([basename (file-name f)]
+                            [timestamp (car (split-many basename "_"))]
+                            ;; Make it more readable: 2026-01-27T09-15-26 -> 2026-01-27 09:15
+                            [display (if (> (string-length timestamp) 16)
+                                        (string-append 
+                                          (substring timestamp 0 10) " "
+                                          (string-replace (substring timestamp 11 16) "-" ":"))
+                                        timestamp)])
+                       (cons display f)))
+                   sorted))))
+        '())))
+
 ;; State for picker callback
 (define *pi-session-map* (hash))
 
@@ -288,13 +316,13 @@
                         "# Pi Coding Agent (Continued Session)\n\nResuming previous session with cached context.\n\n---\n\n")))
 
 ;;@doc
-;; Show picker to select and resume a previous session
+;; Show picker to select and resume a session from current directory
 (define (pi-resume)
   (if (pi-running?)
       (set-status! "pi: already running")
-      (let ([sessions (list-sessions)])
+      (let ([sessions (list-sessions-for-cwd)])
         (if (null? sessions)
-            (set-status! "pi: no sessions found")
+            (set-status! (string-append "pi: no sessions found for " (current-directory)))
             (begin
               ;; Build map from display name to file path
               (set! *pi-session-map*
@@ -302,7 +330,7 @@
                             (hash-insert acc (car pair) (cdr pair)))
                           (hash)
                           sessions))
-              ;; Show picker with display names
+              ;; Show picker with session timestamps
               (push-component!
                 (picker-selection 
                   (map car sessions)
