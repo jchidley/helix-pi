@@ -1,0 +1,18 @@
+[package]
+name = "system-theme-hx"
+version = "0.1.1"
+edition = "2021"
+
+
+[lib]
+name = "system_theme_hx"
+crate-type = ["rlib", "cdylib"]
+
+
+[dependencies]
+steel-core = { version = "0.7.0", git = "https://github.com/mattwparas/steel.git", features = [
+  "dylibs",
+  "sync",
+] }
+abi_stable = "0.11.1"
+dark-light = { git = "https://github.com/rust-dark-light/dark-light.git", rev = "0f18d2f" }
