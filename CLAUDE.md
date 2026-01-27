@@ -14,11 +14,11 @@ Pi coding agent integration for Helix editor via Steel plugins.
 
 ```
 src/
-├── pi-core.scm   # Pure Steel logic (264 LOC, 33 tests)
+├── pi-core.scm   # Pure Steel logic (testable, no helix deps)
 │   ├── Event handling (text/thinking/tool streaming)
 │   ├── RPC message construction
 │   └── Session file parsing
-└── pi.scm        # Helix integration (317 LOC)
+└── pi.scm        # Helix integration
     ├── Buffer management
     ├── Process lifecycle
     └── Callback wiring
@@ -28,24 +28,15 @@ src/
 
 ## RPC Protocol
 
-Based on pi-mono reference implementation at `~/git/pi-mono`:
+Based on pi-mono reference at `~/git/pi-mono`:
 
 | Reference | Path |
 |-----------|------|
 | RPC docs | `packages/coding-agent/docs/rpc.md` |
 | RPC client | `packages/coding-agent/src/modes/rpc/rpc-client.ts` |
-| SDK examples | `packages/coding-agent/examples/sdk/` |
-| Agent core | `packages/agent/src/agent.ts` |
 | Event types | `packages/agent/src/types.ts` |
 
 Spawns `pi --mode rpc` subprocess, communicates via JSON lines over stdio.
-
-**Key Events**:
-| Event | Handling |
-|-------|----------|
-| `message_update` | Streams `text_delta` and `thinking_delta` |
-| `tool_execution_update` | Streams tool output (accumulated→delta) |
-| `tool_execution_end` | Shows final result, closes code block |
 
 ## Commands
 
@@ -53,30 +44,51 @@ Spawns `pi --mode rpc` subprocess, communicates via JSON lines over stdio.
 |---------|-------------|
 | `:pi-start` | Start new session |
 | `:pi-continue` | Resume previous (cache-friendly) |
-| `:pi-resume` | Picker to select session |
 | `:pi-send` | Send prompt |
 | `:pi-abort` | Abort operation |
 | `:pi-quit` | Close session |
-
-## UI Layout
-
-```
-┌─────────────────────┐
-│ Original buffer     │  ← close with C-w q
-├─────────────────────┤
-│ [pi/output]         │  ← streaming output
-├─────────────────────┤
-│ [pi/input]          │  ← type prompts here
-└─────────────────────┘
-```
+| `:pi-recover` | Force reset state |
 
 ## Critical Gotchas
 
+### Steel Module Loading (IMPORTANT)
+
 | Problem | Wrong | Right |
 |---------|-------|-------|
+| `provide` placement | At top of file | **At END of file, after all defines** |
+| Export from sub-module | `(require "mod.scm")` | `(require (only-in "mod.scm" fn1 fn2))` then re-export in helix.scm's `provide` |
 | JSON to pipe | `write-line!` | `#%raw-write-string` + `\n` + `flush` |
 | JSON keys | `"type"` | `'type` (symbol after parse) |
 | define in when | `(when x (define y ...))` | `(when x (let ([y ...]) ...))` |
+
+### helix.scm Integration Pattern
+
+pi.scm must export functions, helix.scm must import AND re-export:
+
+```scheme
+;; pi.scm - END of file
+(provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume pi-recover)
+
+;; helix.scm
+(require (only-in "cogs/pi/pi.scm" 
+                  pi-start pi-send pi-abort pi-quit 
+                  pi-continue pi-resume pi-recover))
+
+(provide ... pi-start pi-send ...)  ; Re-export for :command access
+```
+
+### Debugging Helix Startup Errors
+
+Use tmux to see Steel compilation errors (they scroll by too fast otherwise):
+
+```bash
+SESSION="$(date +%s%N | sha256sum | head -c 6)"
+SOCKET="/tmp/tmux-$SESSION.sock"
+TMUX= tmux -S "$SOCKET" new -d -s "$SESSION"
+tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- 'hx .' Enter
+sleep 3
+tmux -S "$SOCKET" capture-pane -p -J -t "$SESSION":0.0 -S -50
+```
 
 ## Files
 
@@ -84,5 +96,6 @@ Spawns `pi --mode rpc` subprocess, communicates via JSON lines over stdio.
 |----------|---------|
 | `src/pi-core.scm` | Core logic (testable) |
 | `src/pi.scm` | Helix integration |
-| `tests/pi-core-test.scm` | 33 unit tests |
+| `tests/pi-core-test.scm` | Unit tests |
 | `~/.config/helix/cogs/pi/` | Installed plugin |
+| `~/.config/helix/helix.scm` | Must import and re-export pi commands |

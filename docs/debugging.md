@@ -28,96 +28,83 @@ Output:
 ```
 ###### Running tests for module  pi-handle-event  ######
 test > agent_start sets streaming status ... Ok
-test > agent_end sets idle status ... Ok
 ...
-Test result:  33  passed;  0  failed;
+Test result:  55  passed;  0  failed;
 ```
-
-### Writing Tests
-
-Tests use Steel's unit-test module:
-
-```scheme
-;; tests/pi-core-test.scm
-(require "steel/tests/unit-test.scm"
-         (for-syntax "steel/tests/unit-test.scm"))
-(require "../src/pi-core.scm")
-
-(provide __module__)
-(define __module__ "pi-core-test")
-
-(test-module "my-tests"
-  (check-equal? "description"
-    (actual-expression)
-    expected-value))
-```
-
-**Required**: `(provide __module__)` and `(define __module__ ...)` for `steel test` to find tests.
 
 ## Secondary: Interactive REPL
 
-Test pure Steel functions interactively:
+Test pure Steel functions:
 
 ```bash
 cd ~/git/helix-pi && steel interactive src/pi-core.scm
 ```
 
 ```scheme
-λ > (pi-make-prompt-request "hello")
+λ > (pi-make-prompt-request session "hello")
 => #hash(("id" . "req_1") ("message" . "hello") ("type" . "prompt"))
-
-λ > (path-to-session-dir-name "/home/jack/git/helix-pi")
-=> "--home-jack-git-helix-pi--"
-
-λ > (get-text-parts (list (hash 'type "text" 'text "hello")))
-=> ("hello")
 ```
 
 **Note**: `steel interactive src/pi.scm` fails - helix modules aren't available outside Helix.
 
 ## Tertiary: Helix Debug Window
 
-For Helix-specific issues only:
+For Helix-specific issues:
 
 ```
 :open-debug-window
 ```
 
-Add `displayln` statements to see output:
+Add `displayln` statements to see output in the debug window.
 
-```scheme
-(define (helix-append-output text)
-  (displayln (string-append "APPEND: " text))  ; Debug
-  ...)
-```
+## Debugging Helix Startup Errors
 
-## Debug Compilation
+Steel compilation errors scroll by too fast to read. Use tmux to capture them:
 
 ```bash
-# See bytecode
-steel bytecode src/pi-core.scm | head -50
+# Create isolated tmux session
+SESSION="$(date +%s%N | sha256sum | head -c 6)"
+SOCKET="/tmp/tmux-$SESSION.sock"
+TMUX= tmux -S "$SOCKET" new -d -s "$SESSION"
 
-# See expanded AST  
-steel ast src/pi-core.scm | head -50
+# Start helix
+tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- 'hx .' Enter
+sleep 3
+
+# Capture output (including any Steel errors)
+tmux -S "$SOCKET" capture-pane -p -J -t "$SESSION":0.0 -S -50
+
+# Clean up
+tmux -S "$SOCKET" kill-session -t "$SESSION"
+rm -f "$SOCKET"
 ```
+
+Common errors you'll see:
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `FreeIdentifier: Cannot reference identifier before definition` | `provide` before `define` | Move `provide` to END of file |
+| `no such command: 'pi-start'` | helix.scm not re-exporting | Add to helix.scm's `provide` |
+| `BadSyntax: module not found` | Wrong require path | Check relative path from file location |
 
 ## Callback Testing Pattern
 
-pi-core.scm uses callbacks for helix operations. Tests inject mocks:
+pi-core.scm uses callbacks injected via `make-pi-session`:
 
 ```scheme
 ;; In tests
 (define *captured-output* "")
+(define *captured-status* "")
 
-(define (mock-append-output text)
-  (set! *captured-output* (string-append *captured-output* text)))
+(define test-session
+  (make-pi-session
+    #:append-output (lambda (text) 
+                      (set! *captured-output* (string-append *captured-output* text)))
+    #:set-status (lambda (msg) 
+                   (set! *captured-status* msg))))
 
-(pi-set-callbacks! 
-  #:append-output mock-append-output
-  #:set-status (lambda (msg) #f))
-
-;; Now test event handling
-(pi-handle-event (hash 'type "agent_start"))
+;; Test event handling
+(pi-handle-event test-session (hash 'type "agent_start"))
 (check-equal? "status set" *captured-status* "pi: streaming...")
 ```
 
@@ -128,12 +115,13 @@ pi-core.scm uses callbacks for helix operations. Tests inject mocks:
 | `steel interactive pi.scm` fails | Helix modules not available | Test pi-core.scm instead |
 | Test file not found by `steel test` | Missing `__module__` | Add `(provide __module__)` |
 | JSON keys not found | Using string keys | Use symbols: `'type` not `"type"` |
-| `define` in `when` | Invalid Steel syntax | Use `let` binding instead |
+| `define` in `when` fails | Invalid Steel syntax | Use `let` binding instead |
+| `provide` fails in helix | `provide` before definitions | Move `provide` to END of file |
 
-## Workflow Summary
+## Workflow
 
 1. **Write logic** in `pi-core.scm` with no helix imports
 2. **Write tests** in `tests/pi-core-test.scm`
 3. **Run** `steel test tests/` - iterate until green
-4. **Wire up** callbacks in `pi.scm`
-5. **Manual test** in Helix only for integration issues
+4. **Deploy** `cp src/*.scm ~/.config/helix/cogs/pi/`
+5. **Test in Helix** - use tmux capture if startup fails

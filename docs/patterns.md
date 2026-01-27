@@ -4,6 +4,51 @@ Reusable patterns for Helix Steel plugins. Each pattern includes minimal code an
 
 **Source**: Extracted from [helix-config](https://github.com/mattwparas/helix-config) and community plugins.
 
+## Pattern: Module Export (CRITICAL)
+
+**`provide` must be at the END of file, after all definitions.** Helix's module loader differs from standalone Steel.
+
+```scheme
+;; my-plugin.scm - CORRECT structure
+(require ...)
+(require "helper-module.scm")
+
+;; All definitions FIRST
+(define (my-command)
+  (set-status! "Hello"))
+
+(define (another-command)
+  (set-status! "World"))
+
+;; provide LAST - after all defines
+(provide my-command another-command)
+```
+
+**Wrong** (causes "FreeIdentifier" error on helix startup):
+```scheme
+(require ...)
+(provide my-command)  ; WRONG - before definition
+(define (my-command) ...)
+```
+
+### Exposing Commands from Sub-modules
+
+If your plugin uses a separate module file, helix.scm must:
+1. Import specific symbols with `only-in`
+2. Re-export them in its own `provide`
+
+```scheme
+;; helix.scm
+(require (only-in "cogs/my-plugin/main.scm" 
+                  my-command another-command))
+
+(provide ...existing-exports...
+         my-command
+         another-command)
+```
+
+Without the re-export, `:my-command` won't be available as a typed command.
+
 ## Pattern: Simple Command
 
 The minimal pattern for a typed command.
