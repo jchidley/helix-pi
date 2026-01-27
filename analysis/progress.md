@@ -11,5 +11,11 @@ last-updated: 2026-01-27
 - [x] Phase 5: Specs (all 5 clusters)
 - [x] Phase 6: DRY scan (2 significant violations)
 - [x] Phase 7: YAGNI scan (3 dead symbols)
-- [ ] Gate 2: Awaiting user decision on YAGNI removal
-- [ ] Loop 3: Implement
+- [x] Gate 2: Proceed (remove all YAGNI)
+- [x] Loop 3: Implement
+  - [x] sessions: remove list-sessions, use get-text-parts consistently
+  - [x] core: merge pi-spawn-process and pi-spawn-process-with-history
+  - [x] events: remove *pi-is-streaming*
+  - [x] rpc: remove pi-rpc-get-state
+  - [x] buffers: no changes needed (clean)
+- [x] Verify: 507→456 LOC (-10%), committed
