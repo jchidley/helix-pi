@@ -46,7 +46,6 @@
 (define *pi-stdin* #f)        ; Write port
 (define *pi-stdout* #f)       ; Read port  
 (define *pi-request-id* 0)    ; Counter for request IDs
-(define *pi-is-streaming* #f) ; Are we currently streaming?
 
 ;;; ============ Helpers ============
 
@@ -128,9 +127,6 @@
 (define (pi-rpc-abort)
   (pi-rpc-send (hash "type" "abort")))
 
-(define (pi-rpc-get-state)
-  (pi-rpc-send (hash "type" "get_state")))
-
 ;;; ============ Event Handling ============
 
 (define (pi-handle-event event)
@@ -138,11 +134,9 @@
     (cond
       ;; Agent lifecycle
       [(equal? type "agent_start")
-       (set! *pi-is-streaming* #t)
        (set-status! "pi: streaming...")]
       
       [(equal? type "agent_end")
-       (set! *pi-is-streaming* #f)
        (pi-append-output "\n\n")
        (set-status! "pi: idle")]
       
@@ -248,6 +242,18 @@
           (let ([sorted (sort jsonl-files string>?)])
             (car sorted))))))
 
+;; Helper: extract text parts from message content
+;; Returns list of strings, filtering for type="text" parts
+(define (get-text-parts content)
+  (if content
+      (filter (lambda (x) x)
+              (map (lambda (part)
+                     (if (equal? (hash-try-get part 'type) "text")
+                         (hash-try-get part 'text)
+                         #f))
+                   content))
+      '()))
+
 ;; Extract first user message from a session file (for picker display)
 (define (get-first-user-message session-file)
   (call-with-input-file session-file
@@ -263,31 +269,17 @@
                            msg 
                            (equal? (hash-try-get msg 'role) "user"))
                       ;; Found first user message, extract text
-                      (let ([content (hash-try-get msg 'content)])
-                        (if (and content (> (length content) 0))
-                            (let* ([first-part (car content)]
-                                   [text (hash-try-get first-part 'text)])
-                              (if text
-                                  ;; Truncate to ~50 chars for display
-                                  (if (> (string-length text) 50)
-                                      (string-append (substring text 0 47) "...")
-                                      text)
-                                  "(no text)"))
-                            "(empty)"))
+                      (let ([text-parts (get-text-parts (hash-try-get msg 'content))])
+                        (if (null? text-parts)
+                            "(empty)"
+                            (let ([text (car text-parts)])
+                              ;; Truncate to ~50 chars for display
+                              (if (> (string-length text) 50)
+                                  (string-append (substring text 0 47) "...")
+                                  text))))
                       (loop))))))))))
 
 ;; Load and display session history in output buffer
-;; Helper: extract text parts from message content
-(define (get-text-parts content)
-  (if content
-      (filter (lambda (x) x)
-              (map (lambda (part)
-                     (if (equal? (hash-try-get part 'type) "text")
-                         (hash-try-get part 'text)
-                         #f))
-                   content))
-      '()))
-
 (define (display-session-history session-file)
   (call-with-input-file session-file
     (lambda (port)
@@ -319,23 +311,6 @@
                                      text-parts)]
                           [else #f])))))))
             (loop)))))))
-
-;; List all available sessions as (display-name . session-file-path) pairs
-(define (list-sessions)
-  (if (path-exists? (pi-sessions-dir))
-      (let ([dirs (read-dir (pi-sessions-dir))])
-        (filter 
-          (lambda (x) x)  ; Remove #f entries
-          (map
-            (lambda (dir)
-              (let ([latest (get-latest-session-file dir)])
-                (if latest
-                    (let* ([dir-name (file-name dir)]
-                           [display-name (session-dir-to-display-name dir-name)])
-                      (cons display-name latest))
-                    #f)))
-            dirs)))
-      '()))
 
 ;; Convert a path like /home/jack/git/helix-pi to session dir name --home-jack-git-helix-pi--
 (define (path-to-session-dir-name path)
@@ -379,7 +354,7 @@
 (define (pi-start)
   (if (pi-running?)
       (set-status! "pi: already running")
-      (pi-spawn-process '("--mode" "rpc") "")))
+      (pi-spawn-process '("--mode" "rpc"))))
 
 ;;@doc
 ;; Continue previous pi session (cache-friendly - reuses cached context)
@@ -388,12 +363,8 @@
   (if (pi-running?)
       (set-status! "pi: already running")
       (let ([session-file (get-cwd-latest-session)])
-        (if session-file
-            (pi-spawn-process-with-history
-              '("--mode" "rpc" "--continue")
-              session-file)
-            ;; No session found - start anyway (pi will create new)
-            (pi-spawn-process '("--mode" "rpc" "--continue") "")))))
+        (pi-spawn-process '("--mode" "rpc" "--continue")
+                          #:session-file session-file))))
 
 ;;@doc
 ;; Show picker to select and resume a session from current directory
@@ -417,14 +388,15 @@
                   (lambda (selected)
                     (let ([session-file (hash-try-get *pi-session-map* selected)])
                       (if session-file
-                          (pi-spawn-process-with-history
+                          (pi-spawn-process
                             (list "--mode" "rpc" "--session" session-file)
-                            session-file)
+                            #:session-file session-file)
                           (set-status! "pi: session not found"))))
                   #:highlight-prefix "> ")))))))  ; picker, push-component, begin, if, let, if, define))
 
 ;; Internal: spawn pi process with given args
-(define (pi-spawn-process args welcome-msg)
+;; If session-file provided, display history; otherwise start fresh
+(define (pi-spawn-process args #:session-file [session-file #f])
   (let ([result (spawn-process
                   (with-stdout-piped
                     (with-stdin-piped
@@ -441,32 +413,10 @@
           ;; Start event loop
           (pi-event-loop)
           
-          ;; Show welcome
-          (pi-append-output welcome-msg)
-          (set-status! "pi: started"))
-        (set-status! "pi: failed to start process"))))
-
-;; Internal: spawn pi process and display session history
-(define (pi-spawn-process-with-history args session-file)
-  (let ([result (spawn-process
-                  (with-stdout-piped
-                    (with-stdin-piped
-                      (command "pi" args))))])
-    (if (Ok? result)
-        (let ([child (unwrap-ok result)])
-          (set! *pi-process* child)
-          (set! *pi-stdin* (child-stdin child))
-          (set! *pi-stdout* (child-stdout child))
-          
-          ;; Create UI
-          (pi-create-buffers)
-          
-          ;; Start event loop
-          (pi-event-loop)
-          
-          ;; Show history (looks like a live session)
-          (display-session-history session-file)
-          (pi-append-output "---\n\n")
+          ;; Show history if resuming, otherwise fresh start
+          (when session-file
+            (display-session-history session-file)
+            (pi-append-output "---\n\n"))
           (set-status! "pi: ready"))
         (set-status! "pi: failed to start process"))))
 
@@ -501,7 +451,6 @@
     (set! *pi-process* #f)
     (set! *pi-stdin* #f)
     (set! *pi-stdout* #f)
-    (set! *pi-is-streaming* #f)
     (set-status! "pi: stopped (session saved - :pi-continue to resume)")))
 
 
