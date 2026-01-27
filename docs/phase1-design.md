@@ -1,6 +1,8 @@
-# Phase 1: Two-Buffer RPC Integration
+# About Phase 1: Two-Buffer RPC Integration
 
-Minimal viable integration: input buffer → pi RPC → output buffer.
+Design specification for the minimal viable integration: input buffer → pi RPC → output buffer.
+
+This is an **explanation** document (Diátaxis). It covers the RPC protocol, Steel module structure, and implementation plan.
 
 ## RPC Protocol Summary
 

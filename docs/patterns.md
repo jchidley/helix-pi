@@ -1,6 +1,8 @@
-# Steel Plugin Patterns for Helix
+# Steel Plugin Patterns Reference
 
-Common architectural patterns extracted from community plugins.
+Reusable patterns for Helix Steel plugins. Each pattern includes minimal code and references to real implementations.
+
+**Source**: Extracted from [helix-config](https://github.com/mattwparas/helix-config) and community plugins.
 
 ## Pattern: Simple Command
 

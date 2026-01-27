@@ -1,6 +1,8 @@
-# Architecture: Pi Integration for Helix
+# About the Architecture
 
-Design document for integrating pi coding agent with Helix via Steel plugins.
+Design decisions and tradeoffs for integrating pi coding agent with Helix via Steel plugins.
+
+This is an **explanation** document (Diátaxis). It discusses the "why" behind design choices.
 
 ## Reference Implementation
 

@@ -110,6 +110,6 @@ Or use `:open-debug-window` to see `displayln` output.
 
 ## Next Steps
 
-- [How-to: Debug Steel Plugins](howto-debug.md)
-- [Reference: Helix Steel APIs](reference.md)
-- [Patterns: Common Plugin Architectures](patterns.md)
+- [Plugin Patterns](patterns.md) - Common architectural patterns
+- [Architecture](architecture.md) - Design decisions for helix-pi
+- [Steel Development Guide](../steel-helix-development.md) - Comprehensive reference
