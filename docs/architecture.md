@@ -20,7 +20,7 @@ The official pi-agent SDK (`@mariozechner/pi-agent`) is the reference design. It
 
 ## Architecture Options
 
-### Option A: RPC Mode (Simpler)
+### Option A: RPC Mode (Simpler) ← **Phase 1**
 
 Use `pi --mode rpc` as subprocess, communicate via JSON/stdio.
 
@@ -28,21 +28,59 @@ Use `pi --mode rpc` as subprocess, communicate via JSON/stdio.
 Helix/Steel → JSON/stdio → pi RPC process → LLM
 ```
 
-**Pros**: Simpler Steel code, process isolation
+**Pros**: Simpler Steel code, process isolation, uses existing pi infrastructure
 **Cons**: Extra process, RPC protocol overhead
 
-### Option B: Direct SDK (More Control)
+### Option B: Rust Dylib for Process I/O (Medium)
 
-Embed pi-agent logic directly, or call pi-agent via a thin TypeScript bridge.
+Write Rust code for async process handling, still use pi subprocess.
 
 ```
-Helix/Steel → (bridge) → pi-agent SDK → LLM
+Helix/Steel → Rust dylib → pi RPC process → LLM
 ```
 
-**Pros**: Direct event access, no RPC overhead, same patterns as official
-**Cons**: More complex Steel code, or requires TS bridge process
+Steel can load native Rust libraries via `#%require-dylib`. Example from scooter.hx:
 
-**Recommendation**: Start with RPC mode for simplicity, migrate to direct if needed.
+```rust
+// Cargo.toml
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+steel-core = { version = "0.7.0", features = ["dylibs", "sync"] }
+steel-derive = { version = "0.6.0" }
+
+// lib.rs
+use steel::{declare_module, steel_vm::ffi::{FFIModule, RegisterFFIFn}};
+
+declare_module!(create_module);
+
+fn create_module() -> FFIModule {
+    let mut module = FFIModule::new("steel/pi");
+    module
+        .register_fn("pi-spawn", pi_spawn)
+        .register_fn("pi-send", pi_send)
+        .register_fn("pi-read-event", pi_read_event);
+    module
+}
+```
+
+```scheme
+;; In Steel
+(#%require-dylib "libpi_helix" (only-in pi-spawn pi-send pi-read-event))
+```
+
+**Pros**: Better async handling, can use Rust crates (tokio, serde_json)
+**Cons**: Build complexity, requires Rust toolchain
+
+### Option C: Full Rust Integration (Complex)
+
+Reimplement pi-agent logic in Rust, expose directly to Steel.
+
+**Pros**: No subprocess, native performance
+**Cons**: Massive effort, duplicates TypeScript implementation
+
+**Recommendation**: Start with Option A (RPC), consider Option B if async I/O becomes problematic.
 
 ## High-Level Architecture
 
