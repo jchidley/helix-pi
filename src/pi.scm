@@ -254,7 +254,7 @@
     (lambda (port)
       (let loop ()
         (let ([line (read-line-from-port port)])
-          (if (not line)
+          (if (not (string? line))
               "(empty)"
               (let ([event (string->jsexpr line)])
                 (let ([type (hash-try-get event 'type)]
@@ -277,37 +277,47 @@
                       (loop))))))))))
 
 ;; Load and display session history in output buffer
+;; Helper: extract text parts from message content
+(define (get-text-parts content)
+  (if content
+      (filter (lambda (x) x)
+              (map (lambda (part)
+                     (if (equal? (hash-try-get part 'type) "text")
+                         (hash-try-get part 'text)
+                         #f))
+                   content))
+      '()))
+
 (define (display-session-history session-file)
   (call-with-input-file session-file
     (lambda (port)
       (let loop ()
         (let ([line (read-line-from-port port)])
-          (when line
+          ;; Skip empty lines and handle EOF (read-line-from-port may return eof object)
+          (when (and (string? line) (> (string-length line) 0))
             (let ([event (string->jsexpr line)])
               (let ([type (hash-try-get event 'type)]
                     [msg (hash-try-get event 'message)])
                 (when (and (equal? type "message") msg)
                   (let ([role (hash-try-get msg 'role)]
                         [content (hash-try-get msg 'content)])
-                    (cond
-                      [(equal? role "user")
-                       (pi-append-output "## You\n\n")
-                       (when content
-                         (for-each (lambda (part)
-                                     (when (equal? (hash-try-get part 'type) "text")
-                                       (pi-append-output (hash-try-get part 'text))
-                                       (pi-append-output "\n\n")))
-                                   content))]
-                      [(equal? role "assistant")
-                       (pi-append-output "## Assistant\n\n")
-                       (when content
-                         (for-each (lambda (part)
-                                     (let ([part-type (hash-try-get part 'type)])
-                                       (when (equal? part-type "text")
-                                         (pi-append-output (hash-try-get part 'text))
-                                         (pi-append-output "\n\n"))))
-                                   content))]
-                      [else #f])))))
+                    (let ([text-parts (get-text-parts content)])
+                      ;; Only show header if there's text content
+                      (when (not (null? text-parts))
+                        (cond
+                          [(equal? role "user")
+                           (pi-append-output "## You\n\n")
+                           (for-each (lambda (text)
+                                       (pi-append-output text)
+                                       (pi-append-output "\n\n"))
+                                     text-parts)]
+                          [(equal? role "assistant")
+                           (pi-append-output "## Assistant\n\n")
+                           (for-each (lambda (text)
+                                       (pi-append-output text)
+                                       (pi-append-output "\n\n"))
+                                     text-parts)]
+                          [else #f])))))))
             (loop)))))))
 
 ;; List all available sessions as (display-name . session-file-path) pairs
@@ -330,6 +340,15 @@
 ;; Convert a path like /home/jack/git/helix-pi to session dir name --home-jack-git-helix-pi--
 (define (path-to-session-dir-name path)
   (string-append "--" (string-replace (substring path 1 (string-length path)) "/" "-") "--"))
+
+;; Get latest session file for current working directory
+(define (get-cwd-latest-session)
+  (let* ([cwd (current-directory)]
+         [session-dir-name (path-to-session-dir-name cwd)]
+         [session-dir (string-append (pi-sessions-dir) "/" session-dir-name)])
+    (if (path-exists? session-dir)
+        (get-latest-session-file session-dir)
+        #f)))
 
 ;; List sessions for a specific directory (returns list of (display-name . file-path) pairs)
 ;; Display shows first user message, sorted newest first
@@ -360,16 +379,21 @@
 (define (pi-start)
   (if (pi-running?)
       (set-status! "pi: already running")
-      (pi-spawn-process '("--mode" "rpc")
-                        "# Pi Coding Agent (New Session)\n\nType your prompt and run `:pi-send`\n\n---\n\n")))
+      (pi-spawn-process '("--mode" "rpc") "")))
 
 ;;@doc
 ;; Continue previous pi session (cache-friendly - reuses cached context)
+;; Shows full conversation history from last session
 (define (pi-continue)
   (if (pi-running?)
       (set-status! "pi: already running")
-      (pi-spawn-process '("--mode" "rpc" "--continue")
-                        "# Pi Coding Agent (Continued Session)\n\nResuming previous session with cached context.\n\n---\n\n")))
+      (let ([session-file (get-cwd-latest-session)])
+        (if session-file
+            (pi-spawn-process-with-history
+              '("--mode" "rpc" "--continue")
+              session-file)
+            ;; No session found - start anyway (pi will create new)
+            (pi-spawn-process '("--mode" "rpc" "--continue") "")))))
 
 ;;@doc
 ;; Show picker to select and resume a session from current directory
@@ -440,11 +464,10 @@
           ;; Start event loop
           (pi-event-loop)
           
-          ;; Show header and history
-          (pi-append-output "# Pi Coding Agent (Resumed)\n\n---\n\n")
+          ;; Show history (looks like a live session)
           (display-session-history session-file)
           (pi-append-output "---\n\n")
-          (set-status! "pi: resumed"))
+          (set-status! "pi: ready"))
         (set-status! "pi: failed to start process"))))
 
 ;;@doc

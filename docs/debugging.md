@@ -186,11 +186,30 @@ Steel doesn't allow `define` inside `when` (or other non-lexical contexts):
 
 This error is silent in Helix - the code just doesn't run. Use `steel` CLI to check syntax.
 
-## Do NOT Use tmux
+## tmux as Last Resort
 
-tmux automation causes:
-- Race conditions
-- Session instability
-- Debugging overhead
+Prefer the tools above first. If you need to test interactive behavior that can't be isolated:
 
-The official tools above are faster and more reliable.
+```bash
+# Start helix in tmux
+tmux new-session -d -s hx-test
+tmux send-keys -t hx-test '~/git/helix/target/release/hx' Enter
+sleep 1
+
+# Run a command
+tmux send-keys -t hx-test ':pi-resume' Enter
+sleep 1
+
+# Capture output
+tmux capture-pane -t hx-test -p
+
+# Cleanup
+tmux kill-session -t hx-test
+```
+
+**Why prefer other tools first:**
+- Race conditions with timing
+- Can't easily inspect intermediate state
+- Harder to iterate quickly
+
+Use `steel interactive`, `:evalp`, and `:open-debug-window` to isolate issues before resorting to tmux.

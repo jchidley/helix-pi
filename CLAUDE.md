@@ -32,7 +32,7 @@ Pi coding agent integration for Helix editor via Steel plugins.
 4. :evalp (expr)                  ← Quick expression test
 ```
 
-**Do NOT use tmux** for development. Use official tools above.
+**Prefer official tools above.** Use tmux only as last resort for interactive testing.
 
 ## Critical Gotchas
 
