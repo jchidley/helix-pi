@@ -2,14 +2,47 @@
 
 Design document for integrating pi coding agent with Helix via Steel plugins.
 
-**Note**: This design is inspired by observing the Emacs pi-coding-agent's user experience, but the implementation approach must be original due to license incompatibility (GPL-3 vs MIT/Apache-2).
+## Reference Implementation
+
+The official pi-agent SDK (`@mariozechner/pi-agent`) is the reference design. It's MIT licensed and lives in `~/git/pi-mono/packages/agent/`. Key concepts:
+
+- **Agent class**: Stateful wrapper around LLM with tool execution
+- **Event streaming**: Fine-grained events for UI updates
+- **Steering/follow-up**: Queue messages during execution
+- **AgentMessage**: Extensible message type (user, assistant, toolResult, custom)
 
 ## Goals
 
 1. **Split-buffer interface**: Separate input (full editing) and output (read-only)
 2. **Native Helix editing**: Use Helix's modal editing for prompt composition
-3. **Streaming output**: Live display of agent responses
-4. **Markdown rendering**: Syntax-highlighted code blocks in output
+3. **Streaming output**: Live display of agent responses via events
+4. **Direct SDK integration**: Use pi-agent SDK patterns, not RPC
+
+## Architecture Options
+
+### Option A: RPC Mode (Simpler)
+
+Use `pi --mode rpc` as subprocess, communicate via JSON/stdio.
+
+```
+Helix/Steel → JSON/stdio → pi RPC process → LLM
+```
+
+**Pros**: Simpler Steel code, process isolation
+**Cons**: Extra process, RPC protocol overhead
+
+### Option B: Direct SDK (More Control)
+
+Embed pi-agent logic directly, or call pi-agent via a thin TypeScript bridge.
+
+```
+Helix/Steel → (bridge) → pi-agent SDK → LLM
+```
+
+**Pros**: Direct event access, no RPC overhead, same patterns as official
+**Cons**: More complex Steel code, or requires TS bridge process
+
+**Recommendation**: Start with RPC mode for simplicity, migrate to direct if needed.
 
 ## High-Level Architecture
 
@@ -19,23 +52,25 @@ Design document for integrating pi coding agent with Helix via Steel plugins.
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │              Output Buffer (read-only)              │    │
-│  │  - Rendered markdown conversation                   │    │
-│  │  - Syntax-highlighted code blocks                   │    │
-│  │  - Collapsible tool output sections                 │    │
-│  │  - Status indicators (model, context usage)         │    │
+│  │  - Conversation history (AgentMessage[])            │    │
+│  │  - Streaming assistant responses                    │    │
+│  │  - Tool execution blocks (collapsible)              │    │
+│  │  - Status: model, context usage, streaming state    │    │
 │  └─────────────────────────────────────────────────────┘    │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │              Input Buffer (editable)                │    │
-│  │  - Full Helix editing (modal, macros, registers)    │    │
+│  │  - Full Helix modal editing                         │    │
 │  │  - Multi-line prompt composition                    │    │
-│  │  - History navigation                               │    │
-│  │  - @ file references, /commands completion          │    │
+│  │  - History navigation (previous prompts)            │    │
+│  │  - @ file references, /commands, path completion    │    │
 │  └─────────────────────────────────────────────────────┘    │
 ├─────────────────────────────────────────────────────────────┤
 │                    Steel Plugin Layer                        │
-│  - RPC communication with pi process                        │
-│  - State management (model, session, context)               │
-│  - Event dispatch (streaming, tool execution)               │
+│  - Process management (pi RPC subprocess)                   │
+│  - Event handling (agent_start/end, message_*, tool_*)      │
+│  - State: model, thinkingLevel, isStreaming, messages       │
+│  - Steering queue (interrupt tools)                         │
+│  - Follow-up queue (queue after completion)                 │
 └───────────────────────────┬─────────────────────────────────┘
                             │ JSON/stdio
                             ▼
@@ -44,214 +79,334 @@ Design document for integrating pi coding agent with Helix via Steel plugins.
                     └───────────────┘
 ```
 
+## Event Flow (from pi-agent SDK)
+
+### prompt() Sequence
+
+```
+send_message("Hello")
+├─ agent_start
+├─ turn_start
+├─ message_start   { message: userMessage }
+├─ message_end     { message: userMessage }
+├─ message_start   { message: assistantMessage }
+├─ message_update  { delta: "Hi" }              ← Stream to output
+├─ message_update  { delta: " there!" }
+├─ message_end     { message: assistantMessage }
+├─ turn_end        { message, toolResults: [] }
+└─ agent_end       { messages: [...] }
+```
+
+### With Tool Calls
+
+```
+send_message("Read config.json")
+├─ agent_start
+├─ turn_start
+├─ message_start/end  { userMessage }
+├─ message_start      { assistantMessage with toolCall }
+├─ message_update...                              ← "Let me read that file"
+├─ message_end
+├─ tool_execution_start  { toolName: "Read", args: {path: "config.json"} }
+├─ tool_execution_update { partialResult: "..." } ← Stream tool output
+├─ tool_execution_end    { result: "...", isError: false }
+├─ message_start/end  { toolResultMessage }
+├─ turn_end
+│
+├─ turn_start                                     ← Next turn
+├─ message_start      { assistantMessage }
+├─ message_update...                              ← "The config contains..."
+├─ message_end
+├─ turn_end
+└─ agent_end
+```
+
 ## Component Design
 
 ### 1. Buffer Management
 
-Use the **Labelled Buffer** pattern from helix-config:
+Use the **Labelled Buffer** pattern:
 
-```
-PI-OUTPUT-BUFFER  = "helix-pi/output"   ; Read-only conversation
-PI-INPUT-BUFFER   = "helix-pi/input"    ; Editable prompt
-```
-
-**Split layout options**:
-- Horizontal: Output top, Input bottom (like Emacs version)
-- Vertical: Output left, Input right
-- User-configurable via Steel variable
-
-**Key behaviors**:
-- Output buffer: Markdown mode, read-only, auto-scroll on streaming
-- Input buffer: Plain text mode, full Helix editing, mode-specific keybindings
-
-### 2. RPC Communication Layer
-
-**Process management**:
 ```scheme
-;; Spawn pi process
-(define pi-process
-  (spawn-process
-    (with-stdout-piped
-      (with-stdin-piped
-        (command "pi" '("--mode" "rpc" "--no-session"))))))
-
-;; I/O handles
-(define pi-stdin (child-stdin pi-process))
-(define pi-stdout (child-stdout pi-process))
+(define PI-OUTPUT "helix-pi/output")   ; Read-only conversation
+(define PI-INPUT  "helix-pi/input")    ; Editable prompt
 ```
 
-**Message protocol** (JSON-over-stdio):
+**Output buffer behaviors**:
+- Read-only markdown/text mode
+- Auto-scroll during streaming (follow insertion point)
+- Collapsible tool output sections
+- Message navigation (n/p to jump between user messages)
+
+**Input buffer behaviors**:
+- Full Helix editing (normal, insert, select modes)
+- Multi-line (Enter doesn't send)
+- Send with `:pi-send` command or keybinding
+- History with `:pi-history-prev` / `:pi-history-next`
+
+### 2. State Management
+
+Map pi-agent's `AgentState` to Steel:
+
 ```scheme
-;; Send command
-(define (rpc-send command)
-  (write-line! pi-stdin (json-encode command)))
+;; Core state (mirrors AgentState)
+(define *pi-model* #f)                ; Model name string
+(define *pi-thinking-level* "off")    ; "off" | "minimal" | "low" | "medium" | "high"
+(define *pi-messages* '())            ; List of AgentMessage plists
+(define *pi-is-streaming* #f)         ; Boolean
+(define *pi-stream-message* #f)       ; Current partial during streaming
+(define *pi-pending-tool-calls* '())  ; Set of tool call IDs
+(define *pi-error* #f)                ; Error message or #f
 
-;; Commands have structure:
-;; { "type": "send_message", "message": "...", "id": "req_1" }
-;; { "type": "get_state", "id": "req_2" }
-;; { "type": "abort", "id": "req_3" }
+;; UI state
+(define *pi-input-history* '())       ; List of previous prompts
+(define *pi-history-index* #f)        ; Current position in history
 ```
 
-**Async event handling**:
-- Use `spawn-native-thread` for non-blocking stdout reads
-- Use `hx.block-on-task` to update UI from background thread
-- Event types: `agent_start`, `agent_end`, `message_update`, `tool_execution_*`
+### 3. RPC Communication
 
-### 3. State Management
-
-**Session state** (stored in module-level variables):
 ```scheme
-(define *pi-status* 'idle)           ; 'idle | 'streaming | 'compacting
-(define *pi-model* #f)               ; Current model name
-(define *pi-thinking-level* #f)      ; extended | high | none
-(define *pi-session-id* #f)          ; Session identifier
-(define *pi-context-usage* 0)        ; Percentage 0-100
-(define *pi-messages* '())           ; Conversation history
+(require-builtin steel/process)
+(require "steel/result")
+
+;; Start pi RPC process
+(define (pi-start-process)
+  (define child
+    (unwrap-ok
+      (spawn-process
+        (with-stdout-piped
+          (with-stdin-piped
+            (command "pi" '("--mode" "rpc" "--no-session")))))))
+  (list (child-stdin child) (child-stdout child) child))
+
+;; Send command (JSON-encode plist, add newline)
+(define (pi-send! stdin command)
+  (write-line! stdin (json-encode command)))
+
+;; Commands map to RPC types:
+;; - send_message: { "type": "send_message", "message": "...", "id": "req_1" }
+;; - get_state: { "type": "get_state", "id": "req_2" }
+;; - abort: { "type": "abort", "id": "req_3" }
+;; - set_model: { "type": "set_model", "model": "...", "id": "req_4" }
+;; - steer: { "type": "steer", "message": "...", "id": "req_5" }
+;; - follow_up: { "type": "follow_up", "message": "...", "id": "req_6" }
 ```
 
-**Status transitions**:
+### 4. Event Handling
+
+Background thread reads stdout, dispatches to UI:
+
+```scheme
+(define (pi-event-loop stdout)
+  (spawn-native-thread
+    (lambda ()
+      (let loop ()
+        (define line (read-line-from-port stdout))
+        (when line
+          (define event (json-decode line))
+          (hx.block-on-task
+            (lambda ()
+              (pi-handle-event event)))
+          (loop))))))
+
+(define (pi-handle-event event)
+  (define type (hash-ref event "type"))
+  (cond
+    [(equal? type "agent_start")
+     (set! *pi-is-streaming* #t)]
+    
+    [(equal? type "agent_end")
+     (set! *pi-is-streaming* #f)
+     (set! *pi-messages* (hash-ref event "messages"))]
+    
+    [(equal? type "message_update")
+     (define delta (hash-ref (hash-ref event "assistantMessageEvent") "delta"))
+     (pi-append-to-output delta)]
+    
+    [(equal? type "tool_execution_start")
+     (pi-render-tool-start event)]
+    
+    [(equal? type "tool_execution_update")
+     (pi-render-tool-update event)]
+    
+    [(equal? type "tool_execution_end")
+     (pi-render-tool-end event)]
+    
+    [else (void)]))
 ```
-idle → streaming (on send_message)
-streaming → idle (on agent_end)
-idle → compacting (on compact)
-compacting → idle (on compact_end)
+
+### 5. Output Rendering
+
+**Message format** (simple text, no complex markdown):
+
+```
+─────────────────────────────────────────────────────────────
+You [10:30:42]
+─────────────────────────────────────────────────────────────
+Read the config.json file and explain what it does.
+
+─────────────────────────────────────────────────────────────
+Assistant [10:30:43] claude-sonnet-4
+─────────────────────────────────────────────────────────────
+Let me read that file for you.
+
+▶ READ: config.json
+│ {
+│   "name": "my-project",
+│   "version": "1.0.0"
+│ }
+
+The config file is a standard package.json...
 ```
 
-### 4. Output Buffer Rendering
+**Tool output (collapsible)**:
 
-**Markdown handling options**:
-
-1. **Raw markdown**: Just insert text, rely on syntax highlighting
-   - Pros: Simple, works today
-   - Cons: No folding, no rendered formatting
-
-2. **Processed markdown**: Parse and add Helix properties
-   - Code blocks: Apply language-specific highlighting
-   - Headers: Add fold markers
-   - Tool output: Collapsible sections with preview
-
-3. **Hybrid**: Raw markdown with custom overlays for structure
-   - Use `overlay` text properties for code blocks
-   - Track block boundaries for folding
-
-**Tool output display**:
-```
-▶ BASH: git status
-  ┌────────────────────────────────────
-  │ On branch main
-  │ Your branch is up to date...
-  │ [+3 more lines - press TAB to expand]
-  └────────────────────────────────────
+```scheme
+(define (pi-render-tool-start event)
+  (define tool-name (hash-ref event "toolName"))
+  (define args (hash-ref event "args"))
+  (pi-append-to-output
+    (format "\n▶ ~a: ~a\n│ " 
+            (string-upcase tool-name)
+            (pi-format-tool-args args))))
 ```
 
-### 5. Input Buffer Features
+### 6. Input Features
 
-**Prompt composition**:
-- Full Helix modal editing (normal, insert, select modes)
-- Multi-line support (no immediate send on Enter)
-- Send with custom keybinding (e.g., `<C-Enter>` or command)
+**Send prompt**:
+```scheme
+(provide pi-send)
+
+;;@doc
+;; Send the current input buffer contents to pi
+(define (pi-send)
+  (define text (pi-get-input-contents))
+  (when (> (string-length (string-trim text)) 0)
+    (pi-history-add text)
+    (pi-send! *pi-stdin* 
+      (hash "type" "send_message" 
+            "message" text 
+            "id" (pi-next-request-id)))
+    (pi-clear-input)))
+```
 
 **History**:
 ```scheme
-(define *input-history* '())
-(define *history-index* #f)
+(provide pi-history-prev pi-history-next)
 
-(define (history-previous)
-  (when (and (not (null? *input-history*))
-             (or (not *history-index*)
-                 (< *history-index* (- (length *input-history*) 1))))
-    (set! *history-index* (if *history-index* (+ *history-index* 1) 0))
-    (replace-buffer-contents (list-ref *input-history* *history-index*))))
+;;@doc
+;; Navigate to previous prompt in history
+(define (pi-history-prev)
+  (when (not (null? *pi-input-history*))
+    (cond
+      [(not *pi-history-index*)
+       (set! *pi-history-index* 0)]
+      [(< *pi-history-index* (- (length *pi-input-history*) 1))
+       (set! *pi-history-index* (+ *pi-history-index* 1))])
+    (pi-set-input-contents 
+      (list-ref *pi-input-history* *pi-history-index*))))
 ```
 
-**Completions**:
-- `@` - File reference (project files, respecting .gitignore)
-- `/` - Slash commands from ~/.pi/commands/
-- `./`, `../`, `~/` - Path completion
+**Steering (interrupt)**:
+```scheme
+(provide pi-steer)
 
-### 6. Keybindings
+;;@doc
+;; Send steering message to interrupt current tool execution
+(define (pi-steer)
+  (when *pi-is-streaming*
+    (define text (pi-get-input-contents))
+    (pi-send! *pi-stdin*
+      (hash "type" "steer"
+            "message" text
+            "id" (pi-next-request-id)))
+    (pi-clear-input)))
+```
+
+### 7. Keybindings
 
 **Input buffer** (pi-input mode):
-| Key | Action |
-|-----|--------|
-| `<C-Enter>` | Send message |
-| `<C-c>` | Abort streaming |
-| `<C-p>` | History previous |
-| `<C-n>` | History next |
-| `<Tab>` | Complete at point |
-| `@` | File reference picker |
+| Key | Command | Description |
+|-----|---------|-------------|
+| `<C-CR>` or `:pi-send` | `pi-send` | Send message |
+| `<C-k>` | `pi-abort` | Abort streaming |
+| `<C-s>` | `pi-steer` | Steering (interrupt) |
+| `<C-p>` | `pi-history-prev` | Previous history |
+| `<C-n>` | `pi-history-next` | Next history |
+| `@` | completion | File reference |
+| `/` | completion | Slash command |
 
 **Output buffer** (pi-output mode):
-| Key | Action |
-|-----|--------|
-| `n` / `p` | Navigate messages |
-| `<Tab>` | Toggle fold |
-| `<Enter>` | Open file at point |
-| `q` | Close session |
-
-### 7. Status Display
-
-**Header line** (in input buffer or status area):
-```
-[claude-sonnet-4] thinking:high | context: 45% ████████░░░░░░░░░░░░ | idle
-```
-
-**Options for status**:
-1. Custom component overlay (like notify.hx)
-2. Status line integration (if Helix supports)
-3. Buffer header text (first line of output buffer)
+| Key | Command | Description |
+|-----|---------|-------------|
+| `n` | `pi-next-message` | Jump to next user message |
+| `p` | `pi-prev-message` | Jump to previous user message |
+| `<Tab>` | `pi-toggle-fold` | Toggle tool output fold |
+| `<CR>` | `pi-visit-file` | Open file at point |
+| `q` | `pi-quit` | Close session |
 
 ## Implementation Phases
 
-### Phase 1: Core RPC
-- [ ] Process spawning and management
-- [ ] JSON encoding/decoding
+### Phase 1: Core Infrastructure
+- [ ] Process spawn/management
+- [ ] JSON encode/decode helpers
 - [ ] Basic send/receive
-- [ ] State tracking
+- [ ] Event dispatch skeleton
 
 ### Phase 2: Buffer UI
-- [ ] Split buffer layout
-- [ ] Output buffer (read-only, basic text)
-- [ ] Input buffer (editable)
-- [ ] Send/abort commands
+- [ ] Split buffer layout (output + input)
+- [ ] Output buffer with basic text rendering
+- [ ] Input buffer with send command
+- [ ] Abort command
 
 ### Phase 3: Streaming
 - [ ] Background thread for stdout
-- [ ] Live output updates
-- [ ] Progress indicators
+- [ ] Live message_update rendering
+- [ ] Status indicator (streaming/idle)
 
-### Phase 4: Enhanced Output
-- [ ] Markdown syntax highlighting
-- [ ] Code block detection
-- [ ] Collapsible sections
+### Phase 4: Tool Output
+- [ ] tool_execution_* event handling
+- [ ] Formatted tool blocks
+- [ ] Basic folding (collapsed by default)
 
 ### Phase 5: Input Enhancements
-- [ ] History
+- [ ] History (previous/next)
+- [ ] Steering messages
+- [ ] Follow-up queue
+
+### Phase 6: Polish
 - [ ] @ file completion
 - [ ] / command completion
-- [ ] Path completion
+- [ ] Model/thinking-level switching
+- [ ] Session management (resume, fork)
 
-### Phase 6: Session Management
-- [ ] Resume session picker
-- [ ] Fork conversation
-- [ ] Export to HTML
+## Files Structure
 
-## Open Questions
-
-1. **Markdown rendering**: How much can Helix's tree-sitter do vs custom parsing?
-
-2. **Async I/O**: Best pattern for continuous stdout reading without blocking?
-
-3. **Folding**: Does Helix have native fold support we can leverage?
-
-4. **Status line**: Can we integrate with Helix's status line, or need overlay?
-
-5. **Syntax highlighting in code blocks**: Can we switch tree-sitter parsers mid-buffer?
+```
+~/.config/helix/
+├── helix.scm           # Add: (load-package "pi.scm")
+└── cogs/
+    └── pi/
+        ├── pi.scm          # Main module, provides commands
+        ├── rpc.scm         # Process management, JSON protocol
+        ├── state.scm       # State variables, event handling
+        ├── output.scm      # Output buffer rendering
+        ├── input.scm       # Input buffer, history
+        └── completion.scm  # @ file, / command, path completion
+```
 
 ## References
 
-- [pi RPC documentation](https://shittycodingagent.ai/)
-- [Steel process I/O](~/git/steel) - `steel/process` module
-- [helix-config plugins](~/git/helix-config) - Labelled buffer patterns
-- [notify.hx](examples/community-plugins/notify.hx) - Custom components
-- [steel-helix-development.md](../steel-helix-development.md) - Development workflow
+- **pi-agent SDK**: `~/git/pi-mono/packages/agent/` (MIT license)
+  - `README.md` - API documentation
+  - `src/types.ts` - Event types, AgentState
+  - `src/agent.ts` - Agent class implementation
+  - `src/agent-loop.ts` - Core loop logic
+
+- **Steel plugins**: `~/git/helix-config/`
+  - `cogs/file-tree.scm` - Labelled buffer pattern
+  - `cogs/recentf.scm` - File persistence pattern
+
+- **Community plugins**: `~/git/helix-pi/examples/community-plugins/`
+  - `notify.hx/` - Custom components, rendering
+  - `streal.hx/` - Popup picker pattern
