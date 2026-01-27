@@ -1,215 +1,139 @@
-# How to Debug Steel Plugins for Helix
+# How to Debug and Test helix-pi
 
-This guide shows how to debug Steel plugins using official tools from Steel and Helix.
-
-## Prerequisites
-
-- Helix built with Steel: `cargo xtask steel`
-- Steel CLI available: `steel --version`
-- Plugin loaded in `~/.config/helix/helix.scm`
-
-## The Workflow
+## Architecture: Testable Core + Thin Helix Layer
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. PURE SCHEME        →  steel interactive plugin.scm          │
-│  2. HELIX CONTEXT      →  :open-debug-window + :eval-buffer     │
-│  3. EXPRESSION TEST    →  :evalp (expr)                         │
-│  4. AUTOMATED TESTS    →  steel test tests.scm                  │
+│  pi-core.scm     Pure Steel logic, NO helix dependencies        │
+│                  → Testable with steel test                     │
+│                  → Interactive REPL with steel interactive      │
+├─────────────────────────────────────────────────────────────────┤
+│  pi.scm          Thin Helix integration layer                   │
+│                  → Only buffer/window/process management        │
+│                  → Cannot be tested outside Helix               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Step 1: Test Pure Scheme Logic
+**Rule**: Put all logic in `pi-core.scm`. The helix layer should only wire callbacks.
 
-Use `steel interactive` to load your plugin and test functions:
+## Primary: Automated Tests
+
+Run the test suite:
 
 ```bash
-steel interactive ~/.config/helix/cogs/pi/pi.scm
+cd ~/git/helix-pi && steel test tests/
+```
+
+Output:
+```
+###### Running tests for module  pi-handle-event  ######
+test > agent_start sets streaming status ... Ok
+test > agent_end sets idle status ... Ok
+...
+Test result:  33  passed;  0  failed;
+```
+
+### Writing Tests
+
+Tests use Steel's unit-test module:
+
+```scheme
+;; tests/pi-core-test.scm
+(require "steel/tests/unit-test.scm"
+         (for-syntax "steel/tests/unit-test.scm"))
+(require "../src/pi-core.scm")
+
+(provide __module__)
+(define __module__ "pi-core-test")
+
+(test-module "my-tests"
+  (check-equal? "description"
+    (actual-expression)
+    expected-value))
+```
+
+**Required**: `(provide __module__)` and `(define __module__ ...)` for `steel test` to find tests.
+
+## Secondary: Interactive REPL
+
+Test pure Steel functions interactively:
+
+```bash
+cd ~/git/helix-pi && steel interactive src/pi-core.scm
 ```
 
 ```scheme
-λ > (value->jsexpr-string (hash "type" "prompt"))
-=> "{\"type\":\"prompt\"}"
+λ > (pi-make-prompt-request "hello")
+=> #hash(("id" . "req_1") ("message" . "hello") ("type" . "prompt"))
 
-λ > (hash-try-get (hash 'a 1) 'a)
-=> 1
+λ > (path-to-session-dir-name "/home/jack/git/helix-pi")
+=> "--home-jack-git-helix-pi--"
+
+λ > (get-text-parts (list (hash 'type "text" 'text "hello")))
+=> ("hello")
 ```
 
-**Limitation**: Helix APIs (`helix.static.*`, `editor-focus`) don't work here.
+**Note**: `steel interactive src/pi.scm` fails - helix modules aren't available outside Helix.
 
-## Step 2: Use the Debug Window
+## Tertiary: Helix Debug Window
 
-Open the debug window to see `displayln` output:
+For Helix-specific issues only:
 
 ```
 :open-debug-window
 ```
 
-Add tracing to your code:
+Add `displayln` statements to see output:
 
 ```scheme
-(define (my-handler event)
-  (displayln (string-append "EVENT: " (to-string event)))
-  ;; ... rest of handler
-)
+(define (helix-append-output text)
+  (displayln (string-append "APPEND: " text))  ; Debug
+  ...)
 ```
 
-Run your command:
-
-```
-:pi-start
-```
-
-Debug window shows all `displayln` output.
-
-## Step 3: Hot Reload with eval-buffer
-
-Edit your plugin, then reload without restarting Helix:
-
-```
-:open ~/.config/helix/cogs/pi/pi.scm
-;; Make edits
-:eval-buffer
-```
-
-**Setup required**: Add to `~/.config/helix/helix.scm`:
-
-```scheme
-(require (only-in "helix/ext.scm" eval-buffer))
-;; In (provide ...):
-eval-buffer
-```
-
-## Step 4: Test Expressions with evalp
-
-Quick test any expression:
-
-```
-:evalp → (+ 100 200 300) → 600
-:evalp → (editor-mode) → "normal"
-:evalp → (maybe-fetch-doc-id "pi/output") → #f
-```
-
-## Step 5: Write Unit Tests
-
-Create test file:
-
-```scheme
-;; tests/pi-tests.scm
-(require "steel/tests/unit-test.scm")
-
-(check-equal? "JSON encoding"
-              (value->jsexpr-string (hash "type" "test"))
-              "{\"type\":\"test\"}")
-
-(check-equal? "hash-try-get found"
-              (hash-try-get (hash 'a 1) 'a)
-              1)
-
-(displayln (get-test-stats))
-```
-
-Run:
-
-```bash
-steel tests/pi-tests.scm
-```
-
-Output:
-
-```
-test > JSON encoding ... Ok
-test > hash-try-get found ... Ok
-#hash((success-count . 2) (failure-count . 0) ...)
-```
-
-## Variations
-
-### Debug Compilation Issues
+## Debug Compilation
 
 ```bash
 # See bytecode
-steel bytecode plugin.scm
+steel bytecode src/pi-core.scm | head -50
 
-# See expanded AST
-steel ast plugin.scm
+# See expanded AST  
+steel ast src/pi-core.scm | head -50
 ```
 
-### Verbose Helix Logging
+## Callback Testing Pattern
 
-```bash
-~/git/helix/target/release/hx -v --log /tmp/helix-debug.log
-```
-
-### Create a State Inspector Command
+pi-core.scm uses callbacks for helix operations. Tests inject mocks:
 
 ```scheme
-(provide debug-state)
+;; In tests
+(define *captured-output* "")
 
-;;@doc
-;; Show plugin state
-(define (debug-state)
-  (displayln "=== State ===")
-  (displayln (string-append "running: " (if *pi-process* "yes" "no")))
-  (displayln (string-append "streaming: " (if *pi-is-streaming* "yes" "no"))))
+(define (mock-append-output text)
+  (set! *captured-output* (string-append *captured-output* text)))
+
+(pi-set-callbacks! 
+  #:append-output mock-append-output
+  #:set-status (lambda (msg) #f))
+
+;; Now test event handling
+(pi-handle-event (hash 'type "agent_start"))
+(check-equal? "status set" *captured-status* "pi: streaming...")
 ```
-
-Use with `:debug-state`.
 
 ## Common Issues
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| JSON has extra quotes | `write-line!` escapes | Use `#%raw-write-string` |
-| Process hangs | No flush | Add `flush-output-port` |
-| Key not found in hash | Using string key | Use symbol: `'type` not `"type"` |
-| `(void)` syntax error | Invalid in cond | Use `#f` instead |
-| `symbol->string` fails | Value is string | Use `to-string` |
-| `:eval-buffer` not found | Not exported | Add to helix.scm |
-| BadSyntax on `define` | `define` inside `when` | Use `let` binding instead |
+| `steel interactive pi.scm` fails | Helix modules not available | Test pi-core.scm instead |
+| Test file not found by `steel test` | Missing `__module__` | Add `(provide __module__)` |
+| JSON keys not found | Using string keys | Use symbols: `'type` not `"type"` |
+| `define` in `when` | Invalid Steel syntax | Use `let` binding instead |
 
-### The `define` in `when` Trap
+## Workflow Summary
 
-Steel doesn't allow `define` inside `when` (or other non-lexical contexts):
-
-```scheme
-;; WRONG - causes BadSyntax error
-(when condition
-  (define x (compute-something))
-  (use x))
-
-;; RIGHT - use let binding
-(when condition
-  (let ([x (compute-something)])
-    (use x)))
-```
-
-This error is silent in Helix - the code just doesn't run. Use `steel` CLI to check syntax.
-
-## tmux as Last Resort
-
-Prefer the tools above first. If you need to test interactive behavior that can't be isolated:
-
-```bash
-# Start helix in tmux
-tmux new-session -d -s hx-test
-tmux send-keys -t hx-test '~/git/helix/target/release/hx' Enter
-sleep 1
-
-# Run a command
-tmux send-keys -t hx-test ':pi-resume' Enter
-sleep 1
-
-# Capture output
-tmux capture-pane -t hx-test -p
-
-# Cleanup
-tmux kill-session -t hx-test
-```
-
-**Why prefer other tools first:**
-- Race conditions with timing
-- Can't easily inspect intermediate state
-- Harder to iterate quickly
-
-Use `steel interactive`, `:evalp`, and `:open-debug-window` to isolate issues before resorting to tmux.
+1. **Write logic** in `pi-core.scm` with no helix imports
+2. **Write tests** in `tests/pi-core-test.scm`
+3. **Run** `steel test tests/` - iterate until green
+4. **Wire up** callbacks in `pi.scm`
+5. **Manual test** in Helix only for integration issues

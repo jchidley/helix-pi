@@ -6,11 +6,19 @@ Pi coding agent integration for Helix editor via Steel plugins.
 
 | Task | Command |
 |------|---------|
+| Run tests | `cd ~/git/helix-pi && steel test tests/` |
+| Interactive REPL | `steel interactive src/pi-core.scm` |
 | Build Helix | `cd ~/git/helix && cargo xtask steel` |
 | Run Helix | `~/git/helix/target/release/hx` |
-| Steel REPL | `steel` |
-| Steel interactive | `steel interactive file.scm` |
-| Unit tests | `steel test tests.scm` |
+
+## Architecture
+
+```
+pi-core.scm  →  Pure Steel logic (testable, 33 tests)
+pi.scm       →  Thin Helix integration (callbacks only)
+```
+
+**Rule**: All logic goes in pi-core.scm. Helix layer only wires callbacks.
 
 ## Plugin Commands
 
@@ -18,100 +26,53 @@ Pi coding agent integration for Helix editor via Steel plugins.
 |---------|-------------|
 | `:pi-start` | Start new session |
 | `:pi-continue` | Resume previous session (cache-friendly) |
-| `:pi-resume` | Picker to select any session to resume |
+| `:pi-resume` | Picker to select session |
 | `:pi-send` | Send prompt |
 | `:pi-abort` | Abort operation |
 | `:pi-quit` | Close session |
 
-## Debugging Workflow
+## UI Layout
+
+Horizontal layout with pi buffers:
+- **Top**: Original buffer (close with `C-w q` if not needed)
+- **Middle**: Output buffer `[pi/output]`  
+- **Bottom**: Input buffer `[pi/input]` (focus here)
+
+Auto-scrolls output to show new content.
+
+## Project Structure
 
 ```
-1. steel interactive plugin.scm   ← Test pure Scheme (no helix APIs)
-2. :open-debug-window             ← See displayln output
-3. :eval-buffer                   ← Hot reload changes
-4. :evalp (expr)                  ← Quick expression test
+helix-pi/
+├── src/
+│   ├── pi-core.scm         # Pure Steel (event handling, RPC, sessions)
+│   └── pi.scm              # Helix integration
+├── tests/
+│   └── pi-core-test.scm    # 33 unit tests
+└── docs/
+    └── debugging.md        # Testing workflow
 ```
-
-**Prefer official tools above.** Use tmux only as last resort for interactive testing.
 
 ## Critical Gotchas
 
 | Problem | Wrong | Right |
 |---------|-------|-------|
-| JSON to pipe | `write-line!` (adds quotes) | `#%raw-write-string` + `\n` |
-| Pipe flush | (nothing) | `flush-output-port` after write |
-| JSON keys | `"type"` | `'type` (symbol) |
-| Void in cond | `(void)` | `#f` |
-| String coercion | `symbol->string` | `to-string` (universal) |
-| eval-buffer | Not available by default | Add to helix.scm provides |
+| JSON to pipe | `write-line!` | `#%raw-write-string` + `\n` + `flush-output-port` |
+| JSON keys | `"type"` | `'type` (symbol after parse) |
 | define in when | `(when x (define y ...))` | `(when x (let ([y ...]) ...))` |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `~/.config/helix/helix.scm` | Exported commands |
-| `~/.config/helix/cogs/pi/pi.scm` | Plugin source |
-| `~/.config/helix/init.scm` | Config, keybindings |
+| `~/.config/helix/cogs/pi/pi.scm` | Installed plugin |
+| `~/.config/helix/cogs/pi/pi-core.scm` | Installed core |
+| `~/.config/helix/helix.scm` | Command exports |
 
-## Process I/O Pattern
+## Deploy Changes
 
-```scheme
-(require-builtin steel/process)
-(require "steel/result")
-
-;; Spawn with pipes
-(define child (unwrap-ok (spawn-process 
-  (with-stdout-piped (with-stdin-piped 
-    (command "pi" '("--mode" "rpc")))))))
-
-;; Write JSON (MUST use raw write + flush)
-(#%raw-write-string json-str (child-stdin child))
-(#%raw-write-string "\n" (child-stdin child))
-(flush-output-port (child-stdin child))
-
-;; Read response
-(define line (read-line-from-port (child-stdout child)))
-(define event (string->jsexpr line))  ; Keys are symbols!
-(hash-try-get event 'type)  ; Use 'type not "type"
+```bash
+cp ~/git/helix-pi/src/*.scm ~/.config/helix/cogs/pi/
 ```
 
-## Background Thread Pattern
-
-```scheme
-(require (only-in "helix/ext.scm" hx.block-on-task))
-
-(spawn-native-thread
-  (lambda ()
-    (let loop ()
-      (define line (read-line-from-port stdout))
-      (when line
-        (hx.block-on-task  ; Required for UI updates
-          (lambda () (handle-event line)))
-        (loop)))))
-```
-
-## Adding eval-buffer
-
-Required in `~/.config/helix/helix.scm`:
-```scheme
-(require (only-in "helix/ext.scm" eval-buffer))
-;; In (provide ...):
-eval-buffer
-```
-
-## Project Structure
-
-```
-helix-pi/
-├── src/pi.scm              # MVP plugin source
-├── docs/debugging.md       # How-to: debugging workflow
-├── docs/architecture.md    # Design decisions
-└── examples/               # Community plugin references
-```
-
-## See Also
-
-- `~/git/helix/STEEL.md` - Official Steel docs
-- `~/git/helix-config/` - Reference plugins
-- `~/git/pi-mono/packages/coding-agent/src/modes/rpc/` - RPC types
+Then restart Helix.
