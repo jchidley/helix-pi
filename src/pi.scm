@@ -21,7 +21,7 @@
 (require "mattwparas-helix-package/cogs/labelled-buffers.scm")
 (require (only-in "mattwparas-helix-package/cogs/picker.scm" picker-selection))
 
-(provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume)
+(provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume pi-test-picker pi-list-sessions)
 
 ;;; ============ Constants ============
 
@@ -378,18 +378,19 @@
       (set-status! "pi: already running")
       (let ([sessions (list-sessions-for-cwd)])
         (if (null? sessions)
-            (set-status! (string-append "pi: no sessions found for " (current-directory)))
-            (begin
-              ;; Build map from display name to file path
+            (set-status! "pi: no sessions found")
+            (let ([labels (map car sessions)]
+                  [files (map cdr sessions)])
+              ;; Store files list for callback
               (set! *pi-session-map*
                     (fold (lambda (pair acc)
                             (hash-insert acc (car pair) (cdr pair)))
                           (hash)
                           sessions))
-              ;; Show picker with first user message
+              ;; Show picker
               (push-component!
                 (picker-selection 
-                  (map car sessions)
+                  labels
                   (lambda (selected)
                     (let ([session-file (hash-try-get *pi-session-map* selected)])
                       (when session-file
@@ -479,3 +480,24 @@
     (set! *pi-stdout* #f)
     (set! *pi-is-streaming* #f)
     (set-status! "pi: stopped (session saved - :pi-continue to resume)")))
+
+;;@doc
+;; Test picker-selection
+(define (pi-test-picker)
+  (displayln "pi-test-picker: starting")
+  (push-component!
+    (picker-selection 
+      '("Option A" "Option B" "Option C")
+      (lambda (selected)
+        (displayln (string-append "Selected: " selected))
+        (set-status! (string-append "You picked: " selected)))
+      #:highlight-prefix "> "))
+  (displayln "pi-test-picker: done"))
+
+;;@doc  
+;; List available sessions (shows in status bar)
+(define (pi-list-sessions)
+  (let ([sessions (list-sessions-for-cwd)])
+    (if (null? sessions)
+        (set-status! "No sessions found")
+        (set-status! (string-append "Sessions: " (string-join (map car sessions) ", "))))))
