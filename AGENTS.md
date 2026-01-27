@@ -7,7 +7,8 @@ See **[CLAUDE.md](./CLAUDE.md)** for complete project documentation.
 | Command | Description |
 |---------|-------------|
 | `:pi-start` | Start new session |
-| `:pi-continue` | Resume previous (cache-friendly) |
+| `:pi-continue` | Resume previous session (cache-friendly) |
+| `:pi-resume` | Picker to select any session |
 | `:pi-send` | Send prompt |
 | `:pi-abort` | Abort operation |
 | `:pi-quit` | Close session |

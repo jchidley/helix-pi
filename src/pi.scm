@@ -20,12 +20,24 @@
 (require (only-in "helix/ext.scm" hx.block-on-task))
 (require "mattwparas-helix-package/cogs/labelled-buffers.scm")
 
-(provide pi-start pi-send pi-abort pi-quit pi-continue)
+(provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume)
 
 ;;; ============ Constants ============
 
 (define PI-OUTPUT "pi/output")
 (define PI-INPUT "pi/input")
+
+;; Get home directory via shell (cached)
+(define *home-dir* #f)
+(define (get-home-dir)
+  (unless *home-dir*
+    (let ([child (spawn-process (with-stdout-piped (command "printenv" '("HOME"))))])
+      (when (Ok? child)
+        (set! *home-dir* (trim (read-port-to-string (child-stdout (unwrap-ok child))))))))
+  *home-dir*)
+
+(define (pi-sessions-dir)
+  (string-append (get-home-dir) "/.pi/agent/sessions"))
 
 ;;; ============ State ============
 
@@ -201,6 +213,60 @@
                   (pi-handle-event event))))
             (loop)))))))
 
+;;; ============ Session Discovery ============
+
+;; Convert directory name like "--home-jack-git-helix-pi--" to "~/git-helix-pi"
+;; Note: pi encodes paths with - as separator, so helix-pi becomes helix-pi (ambiguous)
+;; We show the mangled form but replace home prefix with ~
+(define (session-dir-to-display-name dir-name)
+  (let* ([;; Remove leading/trailing "--"
+          stripped (if (and (> (string-length dir-name) 4)
+                           (equal? (substring dir-name 0 2) "--")
+                           (equal? (substring dir-name (- (string-length dir-name) 2) (string-length dir-name)) "--"))
+                       (substring dir-name 2 (- (string-length dir-name) 2))
+                       dir-name)]
+         ;; Get home dir name (e.g., "jack" from "/home/jack")
+         [home (get-home-dir)]
+         [home-name (file-name home)]
+         ;; Expected formats: "home-{username}" or "home-{username}-..."
+         [home-exact (string-append "home-" home-name)]
+         [home-prefix (string-append "home-" home-name "-")])
+    (cond
+      [(equal? stripped home-exact) "~"]
+      [(starts-with? stripped home-prefix)
+       (string-append "~/" (substring stripped (string-length home-prefix) (string-length stripped)))]
+      [else stripped])))
+
+;; Get most recent .jsonl file in a session directory
+(define (get-latest-session-file session-dir)
+  (let ([files (read-dir session-dir)])
+    (let ([jsonl-files (filter (lambda (f) (ends-with? f ".jsonl")) files)])
+      (if (null? jsonl-files)
+          #f
+          ;; Files are named with ISO timestamps, so sorting gives us chronological order
+          (let ([sorted (sort jsonl-files string>?)])
+            (car sorted))))))
+
+;; List all available sessions as (display-name . session-file-path) pairs
+(define (list-sessions)
+  (if (path-exists? (pi-sessions-dir))
+      (let ([dirs (read-dir (pi-sessions-dir))])
+        (filter 
+          (lambda (x) x)  ; Remove #f entries
+          (map
+            (lambda (dir)
+              (let ([latest (get-latest-session-file dir)])
+                (if latest
+                    (let* ([dir-name (file-name dir)]
+                           [display-name (session-dir-to-display-name dir-name)])
+                      (cons display-name latest))
+                    #f)))
+            dirs)))
+      '()))
+
+;; State for picker callback
+(define *pi-session-map* (hash))
+
 ;;; ============ Commands ============
 
 ;;@doc
@@ -219,6 +285,33 @@
       (set-status! "pi: already running")
       (pi-spawn-process '("--mode" "rpc" "--continue")
                         "# Pi Coding Agent (Continued Session)\n\nResuming previous session with cached context.\n\n---\n\n")))
+
+;;@doc
+;; Show picker to select and resume a previous session
+(define (pi-resume)
+  (if (pi-running?)
+      (set-status! "pi: already running")
+      (let ([sessions (list-sessions)])
+        (if (null? sessions)
+            (set-status! "pi: no sessions found")
+            (begin
+              ;; Build map from display name to file path
+              (set! *pi-session-map*
+                    (fold (lambda (pair acc)
+                            (hash-insert acc (car pair) (cdr pair)))
+                          (hash)
+                          sessions))
+              ;; Show picker with display names
+              (push-component!
+                (picker 
+                  (map car sessions)
+                  (lambda (selected)
+                    (let ([session-file (hash-try-get *pi-session-map* selected)])
+                      (when session-file
+                        (pi-spawn-process
+                          (list "--mode" "rpc" "--session" session-file)
+                          (string-append "# Pi Coding Agent (Resumed)\n\nSession: " selected "\n\n---\n\n")))))
+                  (hash "title" "Resume Session"))))))))  ; picker, push-component, begin, if, let, if, define))
 
 ;; Internal: spawn pi process with given args
 (define (pi-spawn-process args welcome-msg)

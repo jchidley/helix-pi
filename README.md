@@ -40,6 +40,7 @@ cp src/pi.scm ~/.config/helix/cogs/pi/
 |---------|-------------|
 | `:pi-start` | Start new session |
 | `:pi-continue` | Resume previous session (cache-friendly) |
+| `:pi-resume` | Picker to select any session to resume |
 | `:pi-send` | Send prompt from input buffer |
 | `:pi-abort` | Abort current operation |
 | `:pi-quit` | Close session |

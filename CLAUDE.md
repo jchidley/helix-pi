@@ -17,7 +17,8 @@ Pi coding agent integration for Helix editor via Steel plugins.
 | Command | Description |
 |---------|-------------|
 | `:pi-start` | Start new session |
-| `:pi-continue` | Resume previous (cache-friendly) |
+| `:pi-continue` | Resume previous session (cache-friendly) |
+| `:pi-resume` | Picker to select any session to resume |
 | `:pi-send` | Send prompt |
 | `:pi-abort` | Abort operation |
 | `:pi-quit` | Close session |
