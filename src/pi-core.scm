@@ -9,28 +9,6 @@
 ;;;
 ;;; Helix-specific operations are injected via callbacks.
 
-(provide
-  ;; Session management
-  make-pi-session
-  pi-session?
-  pi-session-streaming?
-  pi-session-reset!
-  
-  ;; Event handling
-  pi-handle-event
-  
-  ;; RPC construction
-  pi-make-prompt-request
-  pi-make-abort-request
-  pi-make-follow-up-request
-  pi-make-steer-request
-  
-  ;; Session file utilities
-  path-to-session-dir-name
-  get-text-parts
-  parse-session-file-events
-  format-session-history)
-
 ;;; ============ Session State ============
 ;;; All mutable state is encapsulated in a single struct
 
@@ -412,3 +390,28 @@
                     (apply string-append
                            (map (lambda (text) (string-append text "\n\n")) texts)))))
               messages)))
+
+;;; ============ Exports ============
+;; provide must come after definitions in Steel
+
+(provide
+  ;; Session management
+  make-pi-session
+  pi-session?
+  pi-session-streaming?
+  pi-session-reset!
+  
+  ;; Event handling
+  pi-handle-event
+  
+  ;; RPC construction
+  pi-make-prompt-request
+  pi-make-abort-request
+  pi-make-follow-up-request
+  pi-make-steer-request
+  
+  ;; Session file utilities
+  path-to-session-dir-name
+  get-text-parts
+  parse-session-file-events
+  format-session-history)
