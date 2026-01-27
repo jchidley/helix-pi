@@ -21,7 +21,7 @@
 (require "mattwparas-helix-package/cogs/labelled-buffers.scm")
 (require (only-in "mattwparas-helix-package/cogs/picker.scm" picker-selection))
 
-(provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume pi-test-picker pi-list-sessions)
+(provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume)
 
 ;;; ============ Constants ============
 
@@ -379,9 +379,8 @@
       (let ([sessions (list-sessions-for-cwd)])
         (if (null? sessions)
             (set-status! "pi: no sessions found")
-            (let ([labels (map car sessions)]
-                  [files (map cdr sessions)])
-              ;; Store files list for callback
+            (begin
+              ;; Store session map for callback lookup
               (set! *pi-session-map*
                     (fold (lambda (pair acc)
                             (hash-insert acc (car pair) (cdr pair)))
@@ -390,13 +389,14 @@
               ;; Show picker
               (push-component!
                 (picker-selection 
-                  labels
+                  (map car sessions)
                   (lambda (selected)
                     (let ([session-file (hash-try-get *pi-session-map* selected)])
-                      (when session-file
-                        (pi-spawn-process-with-history
-                          (list "--mode" "rpc" "--session" session-file)
-                          session-file))))
+                      (if session-file
+                          (pi-spawn-process-with-history
+                            (list "--mode" "rpc" "--session" session-file)
+                            session-file)
+                          (set-status! "pi: session not found"))))
                   #:highlight-prefix "> ")))))))  ; picker, push-component, begin, if, let, if, define))
 
 ;; Internal: spawn pi process with given args
@@ -481,23 +481,4 @@
     (set! *pi-is-streaming* #f)
     (set-status! "pi: stopped (session saved - :pi-continue to resume)")))
 
-;;@doc
-;; Test picker-selection
-(define (pi-test-picker)
-  (displayln "pi-test-picker: starting")
-  (push-component!
-    (picker-selection 
-      '("Option A" "Option B" "Option C")
-      (lambda (selected)
-        (displayln (string-append "Selected: " selected))
-        (set-status! (string-append "You picked: " selected)))
-      #:highlight-prefix "> "))
-  (displayln "pi-test-picker: done"))
 
-;;@doc  
-;; List available sessions (shows in status bar)
-(define (pi-list-sessions)
-  (let ([sessions (list-sessions-for-cwd)])
-    (if (null? sessions)
-        (set-status! "No sessions found")
-        (set-status! (string-append "Sessions: " (string-join (map car sessions) ", "))))))
