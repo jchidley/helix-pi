@@ -19,6 +19,7 @@
 (require "helix/misc.scm")
 (require (only-in "helix/ext.scm" hx.block-on-task))
 (require "mattwparas-helix-package/cogs/labelled-buffers.scm")
+(require (only-in "mattwparas-helix-package/cogs/picker.scm" picker-selection))
 
 (provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume)
 
@@ -303,7 +304,7 @@
                           sessions))
               ;; Show picker with display names
               (push-component!
-                (picker 
+                (picker-selection 
                   (map car sessions)
                   (lambda (selected)
                     (let ([session-file (hash-try-get *pi-session-map* selected)])
@@ -311,7 +312,7 @@
                         (pi-spawn-process
                           (list "--mode" "rpc" "--session" session-file)
                           (string-append "# Pi Coding Agent (Resumed)\n\nSession: " selected "\n\n---\n\n")))))
-                  (hash "title" "Resume Session"))))))))  ; picker, push-component, begin, if, let, if, define))
+                  #:highlight-prefix "> ")))))))  ; picker, push-component, begin, if, let, if, define))
 
 ;; Internal: spawn pi process with given args
 (define (pi-spawn-process args welcome-msg)
