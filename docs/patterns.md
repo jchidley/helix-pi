@@ -267,16 +267,26 @@ Spawn external processes with piped I/O.
       (spawn-process 
         (with-stdout-piped 
           (with-stdin-piped 
-            (command "pi" '("--mode" "rpc" "--no-session")))))))
+            (command "pi" '("--mode" "rpc")))))))
   
   (define stdin (child-stdin child))
   (define stdout (child-stdout child))
   
-  ;; Send request
-  (write-line! stdin "{\"type\": \"get_state\"}")
+  ;; Send request (MUST use raw write + flush, NOT write-line!)
+  (#%raw-write-string "{\"type\": \"get_state\"}" stdin)
+  (#%raw-write-string "\n" stdin)
+  (flush-output-port stdin)
   
-  ;; Read response
-  (read-line-from-port stdout))
+  ;; Read response (keys are symbols, not strings!)
+  (let ([line (read-line-from-port stdout)])
+    (let ([event (string->jsexpr line)])
+      (hash-try-get event 'type))))  ; Use 'type not "type"
 ```
 
 This is the foundation for helix-pi integration with the pi coding agent.
+
+**Critical gotchas**:
+- `write-line!` adds Scheme escaping → use `#%raw-write-string` + `\n`
+- Always `flush-output-port` after writing
+- JSON keys become symbols → access with `'key` not `"key"`
+- Use `let` not `define` inside `when` blocks

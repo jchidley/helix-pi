@@ -4,14 +4,14 @@ Pi coding agent integration for [Helix](https://helix-editor.com/) via [Steel](h
 
 ## Status
 
-🚧 Phase 1: Two-buffer RPC integration (in design)
+✅ **MVP Complete** - Two-buffer RPC integration working
 
-## Goals
+## Features
 
-- **Split-buffer UI**: Editable input buffer + read-only markdown output
-- **Streaming responses**: Live display as LLM generates text
-- **Native Helix editing**: Full modal editing for prompt composition
-- **Pi RPC integration**: JSON/stdio communication with `pi --mode rpc`
+- **Split-buffer UI**: Output (left) + Input (right)
+- **Streaming responses**: Live display as LLM generates
+- **Cache-friendly sessions**: `:pi-continue` reuses cached context
+- **Native Helix editing**: Full modal editing for prompts
 
 ## Quick Start
 
@@ -19,43 +19,62 @@ Pi coding agent integration for [Helix](https://helix-editor.com/) via [Steel](h
 # Build Helix with Steel support
 cd ~/git/helix && cargo xtask steel
 
+# Copy plugin to config
+mkdir -p ~/.config/helix/cogs/pi
+cp src/pi.scm ~/.config/helix/cogs/pi/
+
+# Add to ~/.config/helix/helix.scm:
+# (require (only-in "cogs/pi/pi.scm" pi-start pi-send pi-abort pi-quit pi-continue))
+# (provide ... pi-start pi-send pi-abort pi-quit pi-continue)
+
 # Run Helix
 ~/git/helix/target/release/hx
+
+# Start pi session
+:pi-start
 ```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `:pi-start` | Start new session |
+| `:pi-continue` | Resume previous session (cache-friendly) |
+| `:pi-send` | Send prompt from input buffer |
+| `:pi-abort` | Abort current operation |
+| `:pi-quit` | Close session |
 
 ## Documentation
 
-### For Humans (Diátaxis)
-
-| Type | Document | Purpose |
-|------|----------|---------|
-| Tutorial | [Your First Steel Plugin](docs/tutorial.md) | Learn by building a word counter |
-| Reference | [Plugin Patterns](docs/patterns.md) | Common architectural patterns |
-| Explanation | [Architecture](docs/architecture.md) | Design decisions and tradeoffs |
-| Explanation | [Phase 1 Design](docs/phase1-design.md) | Two-buffer RPC specification |
+| Document | Type | Purpose |
+|----------|------|---------|
+| [Debugging](docs/debugging.md) | How-to | Development and debugging workflow |
+| [Architecture](docs/architecture.md) | Explanation | Design decisions |
+| [Patterns](docs/patterns.md) | Reference | Steel plugin patterns |
 
 ### For LLMs
 
 - [CLAUDE.md](CLAUDE.md) - Project context for AI agents
 
-### Comprehensive Guide
+## Development
 
-- [Steel Development Guide](steel-helix-development.md) - Full reference for Steel plugin development
+Use official Steel/Helix debugging tools:
 
-## Examples
+```bash
+# Test pure Scheme
+steel interactive src/pi.scm
 
-Community plugins in `examples/community-plugins/`:
+# In Helix
+:open-debug-window    # See displayln output
+:eval-buffer          # Hot reload
+:evalp                # Test expression
+```
 
-| Plugin | Source | Demonstrates |
-|--------|--------|--------------|
-| file-tree | [helix-config](https://github.com/mattwparas/helix-config) | Labelled buffers, file navigation |
-| notify.hx | [chuwy](https://github.com/chuwy/notify.hx) | Custom components, rendering |
-| streal.hx | [gllms](https://github.com/gllms/streal.hx) | Popup picker, file persistence |
-| scooter.hx | [thomasschafer](https://github.com/thomasschafer/scooter.hx) | Rust dylib integration |
+See [docs/debugging.md](docs/debugging.md) for complete workflow.
 
 ## Related Projects
 
-- [pi coding agent](https://shittycodingagent.ai/) - The agent we're integrating
+- [pi coding agent](https://github.com/anthropics/anthropic-quickstarts) - The agent
 - [helix](https://github.com/helix-editor/helix) - The editor
 - [steel](https://github.com/mattwparas/steel) - The Scheme implementation
 

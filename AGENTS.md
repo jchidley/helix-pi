@@ -2,4 +2,16 @@
 
 See **[CLAUDE.md](./CLAUDE.md)** for complete project documentation.
 
-This project uses Claude Code as the primary AI tool. AGENTS.md exists for compatibility with other tools (Cursor, Copilot, etc.).
+## Quick Commands
+
+| Command | Description |
+|---------|-------------|
+| `:pi-start` | Start new session |
+| `:pi-continue` | Resume previous (cache-friendly) |
+| `:pi-send` | Send prompt |
+| `:pi-abort` | Abort operation |
+| `:pi-quit` | Close session |
+
+## Debugging
+
+Use `steel interactive`, `:open-debug-window`, `:eval-buffer`. Do NOT use tmux.
