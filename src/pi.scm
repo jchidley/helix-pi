@@ -248,6 +248,68 @@
           (let ([sorted (sort jsonl-files string>?)])
             (car sorted))))))
 
+;; Extract first user message from a session file (for picker display)
+(define (get-first-user-message session-file)
+  (call-with-input-file session-file
+    (lambda (port)
+      (let loop ()
+        (let ([line (read-line-from-port port)])
+          (if (not line)
+              "(empty)"
+              (let ([event (string->jsexpr line)])
+                (let ([type (hash-try-get event 'type)]
+                      [msg (hash-try-get event 'message)])
+                  (if (and (equal? type "message") 
+                           msg 
+                           (equal? (hash-try-get msg 'role) "user"))
+                      ;; Found first user message, extract text
+                      (let ([content (hash-try-get msg 'content)])
+                        (if (and content (> (length content) 0))
+                            (let* ([first-part (car content)]
+                                   [text (hash-try-get first-part 'text)])
+                              (if text
+                                  ;; Truncate to ~50 chars for display
+                                  (if (> (string-length text) 50)
+                                      (string-append (substring text 0 47) "...")
+                                      text)
+                                  "(no text)"))
+                            "(empty)"))
+                      (loop))))))))))
+
+;; Load and display session history in output buffer
+(define (display-session-history session-file)
+  (call-with-input-file session-file
+    (lambda (port)
+      (let loop ()
+        (let ([line (read-line-from-port port)])
+          (when line
+            (let ([event (string->jsexpr line)])
+              (let ([type (hash-try-get event 'type)]
+                    [msg (hash-try-get event 'message)])
+                (when (and (equal? type "message") msg)
+                  (let ([role (hash-try-get msg 'role)]
+                        [content (hash-try-get msg 'content)])
+                    (cond
+                      [(equal? role "user")
+                       (pi-append-output "## You\n\n")
+                       (when content
+                         (for-each (lambda (part)
+                                     (when (equal? (hash-try-get part 'type) "text")
+                                       (pi-append-output (hash-try-get part 'text))
+                                       (pi-append-output "\n\n")))
+                                   content))]
+                      [(equal? role "assistant")
+                       (pi-append-output "## Assistant\n\n")
+                       (when content
+                         (for-each (lambda (part)
+                                     (let ([part-type (hash-try-get part 'type)])
+                                       (when (equal? part-type "text")
+                                         (pi-append-output (hash-try-get part 'text))
+                                         (pi-append-output "\n\n"))))
+                                   content))]
+                      [else #f])))))
+            (loop)))))))
+
 ;; List all available sessions as (display-name . session-file-path) pairs
 (define (list-sessions)
   (if (path-exists? (pi-sessions-dir))
@@ -270,6 +332,7 @@
   (string-append "--" (string-replace (substring path 1 (string-length path)) "/" "-") "--"))
 
 ;; List sessions for a specific directory (returns list of (display-name . file-path) pairs)
+;; Display shows first user message, sorted newest first
 (define (list-sessions-for-cwd)
   (let* ([cwd (current-directory)]
          [session-dir-name (path-to-session-dir-name cwd)]
@@ -277,19 +340,12 @@
     (if (path-exists? session-dir)
         (let ([files (read-dir session-dir)])
           (let ([jsonl-files (filter (lambda (f) (ends-with? f ".jsonl")) files)])
-            ;; Sort newest first, extract display names from filenames
+            ;; Sort newest first
             (let ([sorted (sort jsonl-files string>?)])
               (map (lambda (f)
-                     ;; Extract timestamp from filename like "2026-01-27T09-15-26-031Z_uuid.jsonl"
-                     (let* ([basename (file-name f)]
-                            [timestamp (car (split-many basename "_"))]
-                            ;; Make it more readable: 2026-01-27T09-15-26 -> 2026-01-27 09:15
-                            [display (if (> (string-length timestamp) 16)
-                                        (string-append 
-                                          (substring timestamp 0 10) " "
-                                          (string-replace (substring timestamp 11 16) "-" ":"))
-                                        timestamp)])
-                       (cons display f)))
+                     ;; Use first user message as display name
+                     (let ([first-msg (get-first-user-message f)])
+                       (cons first-msg f)))
                    sorted))))
         '())))
 
@@ -330,42 +386,65 @@
                             (hash-insert acc (car pair) (cdr pair)))
                           (hash)
                           sessions))
-              ;; Show picker with session timestamps
+              ;; Show picker with first user message
               (push-component!
                 (picker-selection 
                   (map car sessions)
                   (lambda (selected)
                     (let ([session-file (hash-try-get *pi-session-map* selected)])
                       (when session-file
-                        (pi-spawn-process
+                        (pi-spawn-process-with-history
                           (list "--mode" "rpc" "--session" session-file)
-                          (string-append "# Pi Coding Agent (Resumed)\n\nSession: " selected "\n\n---\n\n")))))
+                          session-file))))
                   #:highlight-prefix "> ")))))))  ; picker, push-component, begin, if, let, if, define))
 
 ;; Internal: spawn pi process with given args
 (define (pi-spawn-process args welcome-msg)
-  (define result
-    (spawn-process
-      (with-stdout-piped
-        (with-stdin-piped
-          (command "pi" args)))))
-  
-  (if (Ok? result)
-      (let ([child (unwrap-ok result)])
-        (set! *pi-process* child)
-        (set! *pi-stdin* (child-stdin child))
-        (set! *pi-stdout* (child-stdout child))
-        
-        ;; Create UI
-        (pi-create-buffers)
-        
-        ;; Start event loop
-        (pi-event-loop)
-        
-        ;; Show welcome
-        (pi-append-output welcome-msg)
-        (set-status! "pi: started"))
-      (set-status! "pi: failed to start process")))
+  (let ([result (spawn-process
+                  (with-stdout-piped
+                    (with-stdin-piped
+                      (command "pi" args))))])
+    (if (Ok? result)
+        (let ([child (unwrap-ok result)])
+          (set! *pi-process* child)
+          (set! *pi-stdin* (child-stdin child))
+          (set! *pi-stdout* (child-stdout child))
+          
+          ;; Create UI
+          (pi-create-buffers)
+          
+          ;; Start event loop
+          (pi-event-loop)
+          
+          ;; Show welcome
+          (pi-append-output welcome-msg)
+          (set-status! "pi: started"))
+        (set-status! "pi: failed to start process"))))
+
+;; Internal: spawn pi process and display session history
+(define (pi-spawn-process-with-history args session-file)
+  (let ([result (spawn-process
+                  (with-stdout-piped
+                    (with-stdin-piped
+                      (command "pi" args))))])
+    (if (Ok? result)
+        (let ([child (unwrap-ok result)])
+          (set! *pi-process* child)
+          (set! *pi-stdin* (child-stdin child))
+          (set! *pi-stdout* (child-stdout child))
+          
+          ;; Create UI
+          (pi-create-buffers)
+          
+          ;; Start event loop
+          (pi-event-loop)
+          
+          ;; Show header and history
+          (pi-append-output "# Pi Coding Agent (Resumed)\n\n---\n\n")
+          (display-session-history session-file)
+          (pi-append-output "---\n\n")
+          (set-status! "pi: resumed"))
+        (set-status! "pi: failed to start process"))))
 
 ;;@doc
 ;; Send the input buffer contents to pi
