@@ -2,6 +2,13 @@
 
 See **[CLAUDE.md](./CLAUDE.md)** for full documentation.
 
+## Reference Implementation
+
+`~/git/pi-mono` contains pi-agent reference code. Key files:
+- `packages/coding-agent/docs/rpc.md` - RPC protocol spec
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts` - TypeScript RPC client
+- `packages/agent/src/types.ts` - Event type definitions
+
 ## Commands
 
 | Command | Description |

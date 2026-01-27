@@ -28,7 +28,15 @@ src/
 
 ## RPC Protocol
 
-Based on [pi-mono RPC docs](https://github.com/anthropics/pi-mono/blob/main/packages/coding-agent/docs/rpc.md).
+Based on pi-mono reference implementation at `~/git/pi-mono`:
+
+| Reference | Path |
+|-----------|------|
+| RPC docs | `packages/coding-agent/docs/rpc.md` |
+| RPC client | `packages/coding-agent/src/modes/rpc/rpc-client.ts` |
+| SDK examples | `packages/coding-agent/examples/sdk/` |
+| Agent core | `packages/agent/src/agent.ts` |
+| Event types | `packages/agent/src/types.ts` |
 
 Spawns `pi --mode rpc` subprocess, communicates via JSON lines over stdio.
 
