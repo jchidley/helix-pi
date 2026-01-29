@@ -2,118 +2,71 @@
 
 Pi coding agent integration for Helix editor via Steel plugins.
 
-## Prerequisites
-
-Requires custom Helix build: [mattwparas/helix](https://github.com/mattwparas/helix) (Steel fork)
-patched with [PR #8546](https://github.com/helix-editor/helix/pull/8546) (window resize/focus mode).
-
-Build: `cd ~/git/helix && cargo install --path helix-term --locked`
-
-## Current Limitations
-
-Bare "just working" state. Standard AI tools show version/model/context/shortcuts.
-helix-pi shows two empty buffers (`[pi/input]`, `[pi/output]`) — nothing else.
-
-**To change models:** Use `pi` CLI directly.
-
 ## Commands
 
 | Task | Command |
 |------|---------|
-| Run tests | `steel test tests/` |
+| Test | `steel test tests/` |
 | Deploy | `cp src/*.scm ~/.config/helix/cogs/pi/` |
 
-## Helix Commands
+## Prerequisites
 
-| Command | Key | Description |
-|---------|-----|-------------|
-| `:pi-start` | `Alt-p n` | Start new session |
-| `:pi-continue` | `Alt-p p` | Resume last session (cache-friendly) |
-| `:pi-sessions` | `Alt-p l` | List available sessions |
-| `:pi-resume` | `Alt-p r` | Resume session (picker if empty, path from input) |
-| `:pi-send` | `Alt-p s` | Send prompt |
-| `:pi-abort` | `Alt-p a` | Abort operation |
-| `:pi-quit` | `Alt-p q` | Close session |
-| `:pi-model` | `Alt-p m` | Cycle model |
-| `:pi-thinking` | `Alt-p t` | Cycle thinking level |
-| `:pi-status` | `Alt-p S` | Show status |
-| `:pi-compact` | `Alt-p C` | Compact context |
-| `:pi-new` | `Alt-p N` | Fresh session (keep buffers) |
-| `:pi-steer` | `Alt-p i` | Interrupt with steering |
-| `:pi-follow` | `Alt-p f` | Queue follow-up |
-| `:pi-recover` | `Alt-p R` | Force reset state |
+Custom Helix: [mattwparas/helix](https://github.com/mattwparas/helix) + [PR #8546](https://github.com/helix-editor/helix/pull/8546)
+
+Build: `cd ~/git/helix && cargo install --path helix-term --locked`
+
+## Limitations
+
+Bare integration — no status, model info, or instrumentation. Use `pi` CLI to change models.
 
 ## Architecture
 
 ```
 src/
-├── pi-core.scm   # Pure logic (testable, no helix deps)
-├── pi.scm        # Helix integration (buffers, threading)
-└── pi-stdio.scm  # CLI client (debugging)
+├── pi-core.scm   # Pure logic (testable)
+├── pi.scm        # Helix integration
+└── pi-stdio.scm  # CLI debugging client
 ```
 
-**Rule**: All logic in pi-core.scm. Helix layer only wires callbacks.
-
-## RPC Protocol
-
-Reference: `~/git/pi-mono/packages/coding-agent/docs/rpc.md`
-
-Spawns `pi --mode rpc` subprocess, communicates via JSON lines over stdio.
+Rule: Logic in pi-core.scm. Helix layer wires callbacks only.
 
 ## Gotchas
 
-### Steel Process Handles
-
-`child-stdin`, `child-stdout`, `child-stderr` can only be called **ONCE** per process (Rust `.take()` semantics):
+### `provide` at END of file
 
 ```scheme
-;; WRONG - second call returns #f
+(define (pi-start) ...)
+(provide pi-start ...)  ; LAST LINE
+```
+
+### Steel process handles — call ONCE
+
+```scheme
+;; WRONG
 (child-stdin child)  ; returns port
 (child-stdin child)  ; returns #f!
 
-;; RIGHT - capture once
+;; RIGHT
 (define stdin (child-stdin child))
 ```
 
-### Module Loading
+### JSON to pipes
 
-| Problem | Wrong | Right |
-|---------|-------|-------|
-| `provide` placement | At top of file | **At END of file** |
-| JSON to pipe | `write-line!` | `#%raw-write-string` + `\n` + `flush` |
-| JSON keys | `"type"` | `'type` (symbol after parse) |
-| define in when | `(when x (define y ...))` | `(when x (let ([y ...]) ...))` |
+Use `#%raw-write-string` + `\n` + `flush`, not `write-line!`
 
-### helix.scm Integration
-
-pi.scm must export, helix.scm must import AND re-export:
+### helix.scm must re-export
 
 ```scheme
-;; pi.scm - END of file
-(provide pi-start pi-continue pi-sessions pi-resume pi-send pi-abort pi-quit pi-recover
-         pi-model pi-thinking pi-status pi-compact pi-new pi-steer pi-follow)
+;; pi.scm END
+(provide pi-start pi-send ...)
 
 ;; helix.scm
 (require (only-in "cogs/pi/pi.scm" pi-start pi-send ...))
-(provide ... pi-start pi-send ...)  ; Re-export for :command access
+(provide ... pi-start pi-send ...)
 ```
 
-### Debugging Startup Errors
+## RPC
 
-Use tmux to capture Steel compilation errors:
+Reference: `~/git/pi-mono/packages/coding-agent/docs/rpc.md`
 
-```bash
-tmux new-session -d -s test 'hx .'
-sleep 3
-tmux capture-pane -p -t test -S -50
-```
-
-## Files
-
-| Location | Purpose |
-|----------|---------|
-| `src/pi-core.scm` | Core logic (testable) |
-| `src/pi.scm` | Helix integration |
-| `src/pi-stdio.scm` | CLI client for debugging |
-| `tests/pi-core-test.scm` | Unit tests |
-| `~/.config/helix/cogs/pi/` | Installed plugin |
+Spawns `pi --mode rpc`, JSON lines over stdio.
