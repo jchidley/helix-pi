@@ -11,9 +11,10 @@ Build: `cd ~/git/helix && cargo install --path helix-term --locked`
 
 ## Current Limitations
 
-"Just working" state — no status outputs, no model info display, no input instrumentation.
+Bare "just working" state. Input buffer is plain — no progress, no model name, no token counts.
+Compare to Codex, Claude Code, or `pi` terminal: this has none of that instrumentation.
 
-**To change models:** Use `pi` CLI directly, not the Helix commands.
+**To change models:** Use `pi` CLI directly.
 
 ## Commands
 

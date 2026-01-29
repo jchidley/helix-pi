@@ -6,10 +6,10 @@ Pi coding agent integration for [Helix](https://helix-editor.com/) via [Steel](h
 
 ✅ **Working** - Streaming responses, session persistence, prompt caching
 
-⚠️ **Minimal** - This is a "just working" integration. Currently missing:
-- Status outputs (no progress indicators)
-- Model information display
-- Input validation and instrumentation
+⚠️ **Minimal** - This is a bare "just working" integration. The input buffer is
+completely plain — no progress indicators, no model name, no token counts, none
+of the instrumentation you'd see in Codex, Claude Code, or even `pi` in a
+terminal. Compare those interfaces to helix-pi: this has nothing.
 
 **To change models:** Use the `pi` command line directly rather than the Helix integration.
 

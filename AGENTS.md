@@ -8,7 +8,7 @@ Requires: [mattwparas/helix](https://github.com/mattwparas/helix) + [PR #8546](h
 
 ## Limitations
 
-Minimal "just working" state. To change models, use `pi` CLI directly.
+Bare input buffer — no progress, model info, or instrumentation. Use `pi` CLI to change models.
 
 ## Commands
 
