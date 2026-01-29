@@ -11,9 +11,8 @@ Build: `cd ~/git/helix && cargo install --path helix-term --locked`
 
 ## Current Limitations
 
-Bare "just working" state. Compare: pi terminal shows version/model/cost/context/shortcuts,
-Claude Code shows version/model/tier, Codex shows version/model/context. helix-pi shows
-two empty buffers (`[pi/input]`, `[pi/output]`) with no instrumentation.
+Bare "just working" state. Standard AI tools show version/model/context/shortcuts.
+helix-pi shows two empty buffers (`[pi/input]`, `[pi/output]`) — nothing else.
 
 **To change models:** Use `pi` CLI directly.
 

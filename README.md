@@ -6,15 +6,10 @@ Pi coding agent integration for [Helix](https://helix-editor.com/) via [Steel](h
 
 ✅ **Working** - Streaming responses, session persistence, prompt caching
 
-⚠️ **Minimal** - This is a bare "just working" integration. Compare the input
-interfaces:
-
-| Tool | What you see |
-|------|--------------|
-| **pi terminal** | Version, keyboard shortcuts, context files, skills list, status bar with cost/context usage/provider/model/thinking level |
-| **Claude Code** | Version, model name, subscription tier, working directory, input hints |
-| **Codex** | Version, model + reasoning level, working directory, context remaining, command suggestions |
-| **helix-pi** | Two empty buffers labeled `[pi/input]` and `[pi/output]`. Nothing else. |
+⚠️ **Minimal** - This is a bare "just working" integration. Standard AI coding
+tools (pi, Claude Code, Codex) show version, model name, context usage, keyboard
+shortcuts, and status information. helix-pi shows two empty buffers labeled
+`[pi/input]` and `[pi/output]` — nothing else.
 
 **To change models:** Use the `pi` command line directly rather than the Helix integration.
 
