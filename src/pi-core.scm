@@ -21,11 +21,13 @@
    cb-append-output  ; (lambda (text) ...)
    cb-set-status     ; (lambda (msg) ...)
    cb-on-unknown     ; (lambda (type) ...)
+   cb-send           ; (lambda (request) ...) - send RPC request
    ) #:mutable)
 
 (define (make-pi-session #:append-output append-output
                          #:set-status set-status
-                         #:on-unknown-event [on-unknown #f])
+                         #:on-unknown-event [on-unknown #f]
+                         #:send [send #f])
   "Create a fresh session with injected callbacks."
   (pi-session #f                              ; not streaming
               (hash)                          ; no pending requests
@@ -33,7 +35,8 @@
               (hash)                          ; no tool output
               append-output
               set-status
-              (or on-unknown (lambda (t) #f))))
+              (or on-unknown (lambda (t) #f))
+              send))
 
 (define (pi-session-reset! session)
   "Reset session state (but keep callbacks)."
@@ -49,6 +52,11 @@
 (define (session-set-status! session msg)
   (let ([cb (pi-session-cb-set-status session)])
     (when cb (cb msg))))
+
+(define (session-send! session request)
+  "Send a request via the session's send callback (if set)."
+  (let ([cb (pi-session-cb-send session)])
+    (when cb (cb request))))
 
 ;;; ============ Request ID Generation ============
 
@@ -281,10 +289,11 @@
           (session-set-status! session "pi: retry failed")))))
 
 (define (handle-response session event)
-  "Handle RPC response events - surface errors to user."
+  "Handle RPC response events - surface errors and state changes to user."
   (let* ([success (hash-try-get event 'success)]
          [command (hash-try-get event 'command)]
          [error-msg (hash-try-get event 'error)]
+         [data (hash-try-get event 'data)]
          [id (hash-try-get event 'id)]
          [correlated-cmd (if id (resolve-pending! session id) #f)]
          [effective-cmd (or command correlated-cmd)])
@@ -302,7 +311,52 @@
       [(equal? effective-cmd "abort")
        (set-pi-session-streaming?! session #f)
        (session-set-status! session "pi: aborted")]
+      ;; Model cycling response
+      [(equal? command "cycle_model")
+       (when data
+         (let ([model (hash-try-get data 'model)])
+           (when model
+             (let ([name (hash-try-get model 'name)])
+               (session-set-status! session 
+                 (string-append "pi: model → " (or name "unknown")))))))]
+      ;; Thinking level response
+      [(equal? command "cycle_thinking_level")
+       (when data
+         (let ([level (hash-try-get data 'level)])
+           (session-set-status! session 
+             (string-append "pi: thinking → " (or (to-string level) "unknown")))))]
+      ;; Compact response
+      [(equal? command "compact")
+       (session-set-status! session "pi: compacted")]
+      ;; New session response
+      [(equal? command "new_session")
+       (session-set-status! session "pi: new session")]
+      ;; Get state response - display in output
+      [(equal? command "get_state")
+       (when data
+         (let ([model (hash-try-get data 'model)]
+               [thinking (hash-try-get data 'thinkingLevel)]
+               [streaming (hash-try-get data 'isStreaming)]
+               [messages (hash-try-get data 'messageCount)])
+           (session-append-output! session
+             (string-append "\n**Status**\n"
+                            "- Model: " (or (and model (hash-try-get model 'name)) "?") "\n"
+                            "- Thinking: " (or (to-string thinking) "?") "\n"
+                            "- Streaming: " (if streaming "yes" "no") "\n"
+                            "- Messages: " (to-string (or messages 0)) "\n\n"))))]
+      ;; Switch session response - report status (UI handles rendering via on-ready callback)
+      [(equal? command "switch_session")
+       (let ([cancelled (and data (hash-try-get data 'cancelled))])
+         (if cancelled
+             (session-set-status! session "pi: switch cancelled")
+             (session-set-status! session "pi: session loaded")))]
       [else #f])))
+
+(define (truncate-text text max-len)
+  "Truncate text to max-len chars, adding ... if truncated."
+  (if (<= (string-length text) max-len)
+      text
+      (string-append "..." (substring text (- (string-length text) max-len) (string-length text)))))
 
 ;;; ============ RPC Message Construction ============
 
@@ -337,6 +391,56 @@
           "message" message
           "id" id)))
 
+(define (pi-make-cycle-model-request session)
+  "Create a cycle_model RPC request."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "cycle_model")
+    (hash "type" "cycle_model"
+          "id" id)))
+
+(define (pi-make-cycle-thinking-request session)
+  "Create a cycle_thinking_level RPC request."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "cycle_thinking_level")
+    (hash "type" "cycle_thinking_level"
+          "id" id)))
+
+(define (pi-make-compact-request session)
+  "Create a compact RPC request."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "compact")
+    (hash "type" "compact"
+          "id" id)))
+
+(define (pi-make-new-session-request session)
+  "Create a new_session RPC request."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "new_session")
+    (hash "type" "new_session"
+          "id" id)))
+
+(define (pi-make-get-state-request session)
+  "Create a get_state RPC request."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "get_state")
+    (hash "type" "get_state"
+          "id" id)))
+
+(define (pi-make-switch-session-request session path)
+  "Create a switch_session RPC request."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "switch_session")
+    (hash "type" "switch_session"
+          "sessionPath" path
+          "id" id)))
+
+(define (pi-make-get-last-assistant-text-request session)
+  "Create a get_last_assistant_text RPC request."
+  (let ([id (next-request-id! session)])
+    (register-pending! session id "get_last_assistant_text")
+    (hash "type" "get_last_assistant_text"
+          "id" id)))
+
 ;;; ============ Session File Utilities ============
 
 (define (path-to-session-dir-name path)
@@ -344,6 +448,27 @@
   (string-append "--" 
                  (string-replace (substring path 1 (string-length path)) "/" "-") 
                  "--"))
+
+(define (get-sessions-dir cwd)
+  "Get the sessions directory for a given working directory."
+  (let* ([home (env-var "HOME")]
+         [dir-name (path-to-session-dir-name cwd)])
+    (string-append home "/.pi/agent/sessions/" dir-name)))
+
+(define (resolve-session-path filename cwd)
+  "Resolve a session filename to full path. If already absolute, return as-is."
+  (if (and (> (string-length filename) 0)
+           (equal? (substring filename 0 1) "/"))
+      filename
+      (string-append (get-sessions-dir cwd) "/" filename)))
+
+(define (basename path)
+  "Get the filename from a path."
+  (let loop ([chars (reverse (string->list path))] [acc (list)])
+    (cond
+      [(null? chars) (list->string acc)]
+      [(char=? (car chars) #\/) (list->string acc)]
+      [else (loop (cdr chars) (cons (car chars) acc))])))
 
 (define (get-text-parts content)
   "Extract text strings from message content array."
@@ -356,25 +481,30 @@
                    content))
       '()))
 
-(define (parse-session-file-events port)
-  "Parse events from a session file port. Returns list of (role . text-parts) pairs."
-  (let loop ([messages '()])
-    (let ([line (read-line-from-port port)])
-      (if (not (string? line))
-          (reverse messages)
-          (if (= (string-length line) 0)
-              (loop messages)
-              (let ([event (string->jsexpr line)])
-                (let ([type (hash-try-get event 'type)]
-                      [msg (hash-try-get event 'message)])
-                  (if (and (equal? type "message") msg)
-                      (let ([role (hash-try-get msg 'role)]
-                            [content (hash-try-get msg 'content)])
-                        (let ([text-parts (get-text-parts content)])
-                          (if (null? text-parts)
-                              (loop messages)
-                              (loop (cons (cons role text-parts) messages)))))
-                      (loop messages)))))))))
+(define (parse-session-file-messages path)
+  "Parse JSONL session file into list of (role . text-parts) pairs.
+   Returns empty list if file doesn't exist or can't be parsed."
+  (with-handler
+    (lambda (err) '())
+    (call-with-input-file path
+      (lambda (port)
+        (let loop ([messages '()])
+          (let ([line (read-line-from-port port)])
+            (if (not (string? line))
+                (reverse messages)
+                (if (= (string-length line) 0)
+                    (loop messages)
+                    (let ([event (string->jsexpr line)])
+                      (let ([type (hash-try-get event 'type)]
+                            [msg (hash-try-get event 'message)])
+                        (if (and (equal? type "message") msg)
+                            (let ([role (hash-try-get msg 'role)]
+                                  [content (hash-try-get msg 'content)])
+                              (let ([text-parts (get-text-parts content)])
+                                (if (null? text-parts)
+                                    (loop messages)
+                                    (loop (cons (cons role text-parts) messages)))))
+                            (loop messages))))))))))))
 
 (define (format-session-history messages)
   "Format parsed messages into display text. Returns string."
@@ -390,6 +520,80 @@
                     (apply string-append
                            (map (lambda (text) (string-append text "\n\n")) texts)))))
               messages)))
+
+(define (render-session-file path)
+  "Render a session JSONL file to markdown. Returns full rendered string."
+  (format-session-history (parse-session-file-messages path)))
+
+(define (render-session-file-tail path max-lines)
+  "Render a session JSONL file to markdown, returning only the last max-lines."
+  (let* ([full-text (render-session-file path)]
+         [lines (split-lines full-text)]
+         [num-lines (length lines)])
+    (if (<= num-lines max-lines)
+        full-text
+        (string-append "...\n"
+                       (join-lines (list-tail lines (- num-lines max-lines)))))))
+
+(define (split-lines str)
+  "Split string into list of lines."
+  (let loop ([chars (string->list str)] [current '()] [lines '()])
+    (cond
+      [(null? chars)
+       (reverse (if (null? current)
+                    lines
+                    (cons (list->string (reverse current)) lines)))]
+      [(char=? (car chars) #\newline)
+       (loop (cdr chars) '() (cons (list->string (reverse current)) lines))]
+      [else
+       (loop (cdr chars) (cons (car chars) current) lines)])))
+
+(define (join-lines lines)
+  "Join list of lines with newlines."
+  (if (null? lines)
+      ""
+      (apply string-append
+             (cons (car lines)
+                   (map (lambda (line) (string-append "\n" line)) (cdr lines))))))
+
+(define (split-whitespace str)
+  "Split string on whitespace (spaces, tabs, newlines)."
+  (let loop ([chars (string->list str)] [current '()] [words '()])
+    (cond
+      [(null? chars)
+       (reverse (if (null? current)
+                    words
+                    (cons (list->string (reverse current)) words)))]
+      [(or (char=? (car chars) #\space)
+           (char=? (car chars) #\tab)
+           (char=? (car chars) #\newline)
+           (char=? (car chars) #\return))
+       (if (null? current)
+           (loop (cdr chars) '() words)
+           (loop (cdr chars) '() (cons (list->string (reverse current)) words)))]
+      [else
+       (loop (cdr chars) (cons (car chars) current) words)])))
+
+(define (get-latest-session-file cwd)
+  "Get the path to the most recent session file for a working directory.
+   Returns #f if no sessions exist."
+  (let* ([sessions-dir (get-sessions-dir cwd)]
+         [result (with-handler (lambda (e) #f)
+                   ;; ls -t sorts by modification time, newest first
+                   ;; Using shell to avoid reimplementing directory listing + sorting
+                   (let* ([proc-result (spawn-process
+                                         (with-stdout-piped
+                                           (command "ls" (list "-t" sessions-dir))))]
+                          [proc (if (Ok? proc-result) (Ok->value proc-result) #f)])
+                     (if proc
+                         (let* ([stdout-port (child-stdout proc)]
+                                [_ (wait proc)]
+                                [output (read-port-to-string stdout-port)]
+                                [first-file (car (filter (lambda (s) (not (equal? s "")))
+                                                         (split-whitespace output)))])
+                           (string-append sessions-dir "/" first-file))
+                         #f)))])
+    result))
 
 ;;; ============ Exports ============
 ;; provide must come after definitions in Steel
@@ -409,9 +613,22 @@
   pi-make-abort-request
   pi-make-follow-up-request
   pi-make-steer-request
+  pi-make-cycle-model-request
+  pi-make-cycle-thinking-request
+  pi-make-compact-request
+  pi-make-new-session-request
+  pi-make-get-state-request
+  pi-make-switch-session-request
+  pi-make-get-last-assistant-text-request
   
   ;; Session file utilities
   path-to-session-dir-name
+  get-sessions-dir
+  resolve-session-path
+  basename
   get-text-parts
-  parse-session-file-events
-  format-session-history)
+  parse-session-file-messages
+  format-session-history
+  render-session-file
+  render-session-file-tail
+  get-latest-session-file)

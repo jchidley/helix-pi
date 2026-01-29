@@ -4,117 +4,160 @@ Pi coding agent integration for [Helix](https://helix-editor.com/) via [Steel](h
 
 ## Status
 
-✅ **Working** - RPC integration with testable architecture
+✅ **Working** - Streaming responses, session persistence, prompt caching
 
-## Features
+⚠️ **Minimal** - This is a "just working" integration. Currently missing:
+- Status outputs (no progress indicators)
+- Model information display
+- Input validation and instrumentation
 
-- **Split-buffer UI**: Output (top) + Input (bottom) - horizontal layout
-- **Streaming responses**: Live display as LLM generates
-- **Cache-friendly sessions**: `:pi-continue` reuses cached context
-- **Testable core**: 55 unit tests, pure Steel logic separated from Helix
+**To change models:** Use the `pi` command line directly rather than the Helix integration.
+
+## Prerequisites
+
+This plugin requires a custom build of Helix with Steel plugin support:
+
+**Helix with Steel + Window Resize** — My build of [mattwparas/helix](https://github.com/mattwparas/helix)
+(Steel fork) patched with [PR #8546](https://github.com/helix-editor/helix/pull/8546)
+for flex resize and focus mode (expand/contract windows).
+
+The window resize feature (originally [PR #2704](https://github.com/helix-editor/helix/pull/2704))
+allows expanding the active window to focus on code or the AI response buffer.
+
+Building from my local setup:
+```bash
+cd ~/git/helix
+cargo install --path helix-term --locked
+```
 
 ## Quick Start
 
 ```bash
-# Build Helix with Steel support
-cd ~/git/helix && cargo xtask steel
-
-# Copy plugin to config
+# Install plugin
 mkdir -p ~/.config/helix/cogs/pi
 cp src/*.scm ~/.config/helix/cogs/pi/
 
-# Add to ~/.config/helix/helix.scm (see Installation below)
+# Add to ~/.config/helix/helix.scm (see Installation)
 
-# Run Helix
-~/git/helix/target/release/hx
-
-# Start pi session
-:pi-start
+# Use
+:pi-start    # Start new session
+:pi-send     # Send prompt from input buffer
+:pi-quit     # Close session
 ```
+
+## Commands
+
+| Command | Key | Description |
+|---------|-----|-------------|
+| `:pi-start` | `Alt-p n` | Start new session |
+| `:pi-continue` | `Alt-p p` | Resume last session (cache-friendly) |
+| `:pi-sessions` | `Alt-p l` | List available sessions |
+| `:pi-resume` | `Alt-p r` | Resume session (picker if empty, path from input) |
+| `:pi-send` | `Alt-p s` | Send prompt from input buffer |
+| `:pi-abort` | `Alt-p a` | Abort current operation |
+| `:pi-quit` | `Alt-p q` | Close session |
+| `:pi-model` | `Alt-p m` | Cycle to next model |
+| `:pi-thinking` | `Alt-p t` | Cycle thinking level |
+| `:pi-status` | `Alt-p S` | Show current status |
+| `:pi-compact` | `Alt-p C` | Compact conversation context |
+| `:pi-new` | `Alt-p N` | Fresh session (keep buffers) |
+| `:pi-steer` | `Alt-p i` | Interrupt with steering message |
+| `:pi-follow` | `Alt-p f` | Queue follow-up message |
+| `:pi-recover` | `Alt-p R` | Force reset state |
 
 ## Installation
 
 Add to `~/.config/helix/helix.scm`:
 
 ```scheme
-;; Import pi plugin functions
 (require (only-in "cogs/pi/pi.scm" 
-                  pi-start pi-send pi-abort pi-quit 
-                  pi-continue pi-resume pi-recover))
+                  pi-start pi-continue pi-sessions pi-resume pi-send pi-abort pi-quit pi-recover
+                  pi-model pi-thinking pi-status pi-compact pi-new pi-steer pi-follow))
 
-;; Add to your existing provide statement:
 (provide ...your-other-commands...
-         pi-start pi-send pi-abort pi-quit 
-         pi-continue pi-resume pi-recover)
+         pi-start pi-continue pi-sessions pi-resume pi-send pi-abort pi-quit pi-recover
+         pi-model pi-thinking pi-status pi-compact pi-new pi-steer pi-follow)
 ```
 
-## Commands
+Optional keybindings in `~/.config/helix/init.scm`:
 
-| Command | Description |
-|---------|-------------|
-| `:pi-start` | Start new session |
-| `:pi-continue` | Resume previous session (cache-friendly) |
-| `:pi-send` | Send prompt from input buffer |
-| `:pi-abort` | Abort current operation |
-| `:pi-quit` | Close session |
-| `:pi-recover` | Force reset state (if stuck) |
+```scheme
+(add-global-keybinding
+ (hash "normal"
+       (hash "A-p" (hash "p" ":pi-continue"
+                         "n" ":pi-start"
+                         "l" ":pi-sessions"
+                         "r" ":pi-resume"
+                         "s" ":pi-send"
+                         "a" ":pi-abort"
+                         "q" ":pi-quit"
+                         "m" ":pi-model"
+                         "t" ":pi-thinking"
+                         "R" ":pi-recover"
+                         "S" ":pi-status"
+                         "C" ":pi-compact"
+                         "N" ":pi-new"
+                         "f" ":pi-follow"
+                         "i" ":pi-steer"))))
+```
 
-## Usage
+## Documentation
 
-1. `:pi-start` creates split buffers:
-   - `[pi/output]` - streaming LLM responses
-   - `[pi/input]` - type your prompts here
-
-2. Type in the input buffer, then `:pi-send`
-
-3. Use `:pi-quit` when done (session is saved)
-
-4. Next time, `:pi-continue` resumes with cached context
+- [Tutorial: Your First Pi Session](docs/tutorial.md)
+- [How to Debug and Test](docs/debugging.md)
+- [About the Architecture](docs/architecture.md)
+- [Steel Plugin Patterns](docs/patterns.md)
 
 ## Development
 
-### Run Tests
-
 ```bash
-steel test tests/
+steel test tests/                        # Run tests
+cp src/*.scm ~/.config/helix/cogs/pi/    # Deploy
 ```
 
-### Architecture
+## About This Code
 
-```
-src/pi-core.scm   # Pure Steel logic (testable)
-src/pi.scm        # Thin Helix integration layer
-tests/            # Unit tests (steel test)
-```
+Almost all of this code is AI/LLM-generated. It's best used as a source of
+inspiration for your own AI/LLM efforts rather than as a traditional library.
 
-All event handling, RPC construction, and session utilities are in `pi-core.scm` with full test coverage. The Helix layer only wires callbacks.
+**This is personal alpha software.** All my GitHub projects should be considered
+experimental. If you want to use them:
 
-### Documentation
+- **Pin to a specific commit** — don't track `main`, it changes without warning
+- **Use AI/LLM to adapt** — without AI assistance, these projects are hard to use
+- **Treat as inspiration** — build your own version rather than depending on mine
 
-- [Debugging & Testing](docs/debugging.md)
-- [Steel Plugin Patterns](docs/patterns.md)
-- [Architecture](docs/architecture.md)
+**Suggestions welcome** — If you have ideas for improvements or changes, I'd be
+delighted to read them and use them as inspiration for my own efforts.
 
-## Troubleshooting
+**Why not a library?** These days it's often quicker to use AI/LLM to build your
+own than to integrate traditional libraries. My use of AI/LLM is inspired by
+these people and posts:
 
-### Helix won't start / Steel errors
+- [Simon Willison's Weblog](https://simonwillison.net/) — Essential reading on
+  LLMs, prompt engineering, and building with AI
+- [CLI over MCP](https://lucumr.pocoo.org/2025/8/18/code-mcps/) — Armin Ronacher
+  on why command-line tools are better integration points than custom protocols
+- [Build It Yourself](https://lucumr.pocoo.org/2025/12/22/a-year-of-vibes/) —
+  Armin Ronacher: "With our newfound power from agentic coding tools, you can
+  build much of this yourself..."
+- [Shipping at Inference Speed](https://steipete.me/posts/2025/shipping-at-inference-speed) —
+  Peter Steinberger on the new workflow of building with AI assistance
+- [Year in Review 2025](https://mariozechner.at/posts/2025-12-22-year-in-review-2025/) —
+  Mario Zechner on AI-assisted development
 
-Steel compilation errors scroll by fast. Use tmux to capture:
-
-```bash
-tmux new-session -d -s test 'hx .'
-sleep 3
-tmux capture-pane -p -t test -S -50
-```
-
-### "FreeIdentifier" error
-
-Your `provide` is before the `define`. Move `provide` to END of file.
-
-### Command not found
-
-helix.scm must import AND re-export. See Installation above.
+**What I use:** Currently Anthropic's Claude Opus, evaluating OpenAI's GPT Codex
+as an alternative.
 
 ## License
 
-Dual-licensed under MIT and Apache-2.0.
+This project is dual-licensed under the terms of both the MIT license and the
+Apache License (Version 2.0).
+
+See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for details.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this project by you, as defined in the Apache-2.0 license,
+shall be dual licensed as above, without any additional terms or conditions.

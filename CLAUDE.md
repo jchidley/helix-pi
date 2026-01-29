@@ -2,92 +2,109 @@
 
 Pi coding agent integration for Helix editor via Steel plugins.
 
-## Quick Reference
+## Prerequisites
+
+Requires custom Helix build: [mattwparas/helix](https://github.com/mattwparas/helix) (Steel fork)
+patched with [PR #8546](https://github.com/helix-editor/helix/pull/8546) (window resize/focus mode).
+
+Build: `cd ~/git/helix && cargo install --path helix-term --locked`
+
+## Current Limitations
+
+"Just working" state — no status outputs, no model info display, no input instrumentation.
+
+**To change models:** Use `pi` CLI directly, not the Helix commands.
+
+## Commands
 
 | Task | Command |
 |------|---------|
 | Run tests | `steel test tests/` |
-| Interactive REPL | `steel interactive src/pi-core.scm` |
-| Deploy to Helix | `cp src/*.scm ~/.config/helix/cogs/pi/` |
+| Deploy | `cp src/*.scm ~/.config/helix/cogs/pi/` |
+
+## Helix Commands
+
+| Command | Key | Description |
+|---------|-----|-------------|
+| `:pi-start` | `Alt-p n` | Start new session |
+| `:pi-continue` | `Alt-p p` | Resume last session (cache-friendly) |
+| `:pi-sessions` | `Alt-p l` | List available sessions |
+| `:pi-resume` | `Alt-p r` | Resume session (picker if empty, path from input) |
+| `:pi-send` | `Alt-p s` | Send prompt |
+| `:pi-abort` | `Alt-p a` | Abort operation |
+| `:pi-quit` | `Alt-p q` | Close session |
+| `:pi-model` | `Alt-p m` | Cycle model |
+| `:pi-thinking` | `Alt-p t` | Cycle thinking level |
+| `:pi-status` | `Alt-p S` | Show status |
+| `:pi-compact` | `Alt-p C` | Compact context |
+| `:pi-new` | `Alt-p N` | Fresh session (keep buffers) |
+| `:pi-steer` | `Alt-p i` | Interrupt with steering |
+| `:pi-follow` | `Alt-p f` | Queue follow-up |
+| `:pi-recover` | `Alt-p R` | Force reset state |
 
 ## Architecture
 
 ```
 src/
-├── pi-core.scm   # Pure Steel logic (testable, no helix deps)
-│   ├── Event handling (text/thinking/tool streaming)
-│   ├── RPC message construction
-│   └── Session file parsing
-└── pi.scm        # Helix integration
-    ├── Buffer management
-    ├── Process lifecycle
-    └── Callback wiring
+├── pi-core.scm   # Pure logic (testable, no helix deps)
+├── pi.scm        # Helix integration (buffers, threading)
+└── pi-stdio.scm  # CLI client (debugging)
 ```
 
 **Rule**: All logic in pi-core.scm. Helix layer only wires callbacks.
 
 ## RPC Protocol
 
-Based on pi-mono reference at `~/git/pi-mono`:
-
-| Reference | Path |
-|-----------|------|
-| RPC docs | `packages/coding-agent/docs/rpc.md` |
-| RPC client | `packages/coding-agent/src/modes/rpc/rpc-client.ts` |
-| Event types | `packages/agent/src/types.ts` |
+Reference: `~/git/pi-mono/packages/coding-agent/docs/rpc.md`
 
 Spawns `pi --mode rpc` subprocess, communicates via JSON lines over stdio.
 
-## Commands
+## Gotchas
 
-| Command | Description |
-|---------|-------------|
-| `:pi-start` | Start new session |
-| `:pi-continue` | Resume previous (cache-friendly) |
-| `:pi-send` | Send prompt |
-| `:pi-abort` | Abort operation |
-| `:pi-quit` | Close session |
-| `:pi-recover` | Force reset state |
+### Steel Process Handles
 
-## Critical Gotchas
+`child-stdin`, `child-stdout`, `child-stderr` can only be called **ONCE** per process (Rust `.take()` semantics):
 
-### Steel Module Loading (IMPORTANT)
+```scheme
+;; WRONG - second call returns #f
+(child-stdin child)  ; returns port
+(child-stdin child)  ; returns #f!
+
+;; RIGHT - capture once
+(define stdin (child-stdin child))
+```
+
+### Module Loading
 
 | Problem | Wrong | Right |
 |---------|-------|-------|
-| `provide` placement | At top of file | **At END of file, after all defines** |
-| Export from sub-module | `(require "mod.scm")` | `(require (only-in "mod.scm" fn1 fn2))` then re-export in helix.scm's `provide` |
+| `provide` placement | At top of file | **At END of file** |
 | JSON to pipe | `write-line!` | `#%raw-write-string` + `\n` + `flush` |
 | JSON keys | `"type"` | `'type` (symbol after parse) |
 | define in when | `(when x (define y ...))` | `(when x (let ([y ...]) ...))` |
 
-### helix.scm Integration Pattern
+### helix.scm Integration
 
-pi.scm must export functions, helix.scm must import AND re-export:
+pi.scm must export, helix.scm must import AND re-export:
 
 ```scheme
 ;; pi.scm - END of file
-(provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume pi-recover)
+(provide pi-start pi-continue pi-sessions pi-resume pi-send pi-abort pi-quit pi-recover
+         pi-model pi-thinking pi-status pi-compact pi-new pi-steer pi-follow)
 
 ;; helix.scm
-(require (only-in "cogs/pi/pi.scm" 
-                  pi-start pi-send pi-abort pi-quit 
-                  pi-continue pi-resume pi-recover))
-
+(require (only-in "cogs/pi/pi.scm" pi-start pi-send ...))
 (provide ... pi-start pi-send ...)  ; Re-export for :command access
 ```
 
-### Debugging Helix Startup Errors
+### Debugging Startup Errors
 
-Use tmux to see Steel compilation errors (they scroll by too fast otherwise):
+Use tmux to capture Steel compilation errors:
 
 ```bash
-SESSION="$(date +%s%N | sha256sum | head -c 6)"
-SOCKET="/tmp/tmux-$SESSION.sock"
-TMUX= tmux -S "$SOCKET" new -d -s "$SESSION"
-tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- 'hx .' Enter
+tmux new-session -d -s test 'hx .'
 sleep 3
-tmux -S "$SOCKET" capture-pane -p -J -t "$SESSION":0.0 -S -50
+tmux capture-pane -p -t test -S -50
 ```
 
 ## Files
@@ -96,6 +113,6 @@ tmux -S "$SOCKET" capture-pane -p -J -t "$SESSION":0.0 -S -50
 |----------|---------|
 | `src/pi-core.scm` | Core logic (testable) |
 | `src/pi.scm` | Helix integration |
+| `src/pi-stdio.scm` | CLI client for debugging |
 | `tests/pi-core-test.scm` | Unit tests |
 | `~/.config/helix/cogs/pi/` | Installed plugin |
-| `~/.config/helix/helix.scm` | Must import and re-export pi commands |

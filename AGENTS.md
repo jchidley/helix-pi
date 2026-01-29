@@ -2,12 +2,13 @@
 
 See **[CLAUDE.md](./CLAUDE.md)** for full documentation.
 
-## Reference Implementation
+## Prerequisites
 
-`~/git/pi-mono` contains pi-agent reference code:
-- `packages/coding-agent/docs/rpc.md` - RPC protocol spec
-- `packages/coding-agent/src/modes/rpc/rpc-client.ts` - TypeScript RPC client
-- `packages/agent/src/types.ts` - Event type definitions
+Requires: [mattwparas/helix](https://github.com/mattwparas/helix) + [PR #8546](https://github.com/helix-editor/helix/pull/8546)
+
+## Limitations
+
+Minimal "just working" state. To change models, use `pi` CLI directly.
 
 ## Commands
 
@@ -15,31 +16,13 @@ See **[CLAUDE.md](./CLAUDE.md)** for full documentation.
 |------|---------|
 | Run tests | `steel test tests/` |
 | Deploy | `cp src/*.scm ~/.config/helix/cogs/pi/` |
-| REPL | `steel interactive src/pi-core.scm` |
 
-## Helix Commands
+## Critical
 
-`:pi-start`, `:pi-continue`, `:pi-send`, `:pi-abort`, `:pi-quit`, `:pi-recover`
-
-## Critical: Steel Module Pattern
-
-**`provide` must be at END of file**, after all definitions. Helix's module loader differs from standalone Steel.
+**`provide` must be at END of file**, after all definitions.
 
 ```scheme
-;; pi.scm structure
-(require ...)
-(require "pi-core.scm")
-
 (define (pi-start) ...)
-(define (pi-send) ...)
 ;; ... all definitions ...
-
-;; LAST LINE - after all defines
-(provide pi-start pi-send pi-abort pi-quit pi-continue pi-resume pi-recover)
+(provide pi-start ...)  ; LAST LINE
 ```
-
-helix.scm must import with `only-in` and re-export via its `provide`.
-
-## Debugging
-
-Use tmux to capture helix startup errors. Do NOT use tmux for interactive Steel debugging - use `steel interactive` or `:open-debug-window` in helix.

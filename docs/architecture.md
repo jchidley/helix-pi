@@ -4,6 +4,8 @@ Design decisions and tradeoffs for integrating pi coding agent with Helix via St
 
 This is an **explanation** document (Diátaxis). It discusses the "why" behind design choices.
 
+> **Note**: Code examples in this document show the *original design plan*. The actual implementation evolved - see [refactor-session-state.md](refactor-session-state.md) for the current state-encapsulated design.
+
 ## Reference Implementation
 
 The official pi-agent SDK (`@mariozechner/pi-agent`) is the reference design. It's MIT licensed and lives in `~/git/pi-mono/packages/agent/`. Key concepts:
@@ -83,6 +85,38 @@ Reimplement pi-agent logic in Rust, expose directly to Steel.
 **Cons**: Massive effort, duplicates TypeScript implementation
 
 **Recommendation**: Start with Option A (RPC), consider Option B if async I/O becomes problematic.
+
+## Two-Client Design
+
+The codebase has two clients sharing the same core logic:
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│    pi.scm       │     │  pi-stdio.scm   │
+│  (Helix client) │     │  (CLI client)   │
+├─────────────────┤     ├─────────────────┤
+│ Multi-threaded  │     │ Single-threaded │
+│ Helix buffers   │     │ stdin/stdout    │
+│ Channel IPC     │     │ Blocking I/O    │
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         └───────────┬───────────┘
+                     │
+              ┌──────▼──────┐
+              │ pi-core.scm │
+              │ (pure logic)│
+              └─────────────┘
+```
+
+**Why two clients?**
+
+1. **Testability**: pi-stdio.scm runs without Helix, making it easy to test and debug the RPC integration
+2. **Isolation**: If something breaks, run `steel src/pi-stdio.scm` to determine if it's a pi-core.scm issue or Helix integration issue
+3. **Simplicity**: pi-stdio.scm is ~250 lines of single-threaded code - much easier to understand than the multi-threaded Helix version
+
+**Rule**: All event handling, RPC construction, and session logic lives in pi-core.scm. Both clients only wire callbacks.
+
+**pi-stdio.scm commands**: `:help`, `:quit`, `:abort`, `:follow`, `:steer`, `:model`, `:thinking`, `:compact`, `:new`, `:status`
 
 ## High-Level Architecture
 

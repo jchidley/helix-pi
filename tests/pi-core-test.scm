@@ -336,6 +336,52 @@
       (let ([req (pi-make-prompt-request s "three")])
         (hash-ref req "id")))
     "req_3")
+  
+  ;; Cycle model request
+  (check-equal? "cycle-model request has correct type"
+    (let ([s (make-test-session)])
+      (hash-ref (pi-make-cycle-model-request s) "type"))
+    "cycle_model")
+  
+  (check-equal? "cycle-model request has id"
+    (let ([s (make-test-session)])
+      (string? (hash-ref (pi-make-cycle-model-request s) "id")))
+    #t)
+  
+  ;; Cycle thinking request
+  (check-equal? "cycle-thinking request has correct type"
+    (let ([s (make-test-session)])
+      (hash-ref (pi-make-cycle-thinking-request s) "type"))
+    "cycle_thinking_level")
+  
+  ;; Compact request
+  (check-equal? "compact request has correct type"
+    (let ([s (make-test-session)])
+      (hash-ref (pi-make-compact-request s) "type"))
+    "compact")
+  
+  ;; New session request
+  (check-equal? "new-session request has correct type"
+    (let ([s (make-test-session)])
+      (hash-ref (pi-make-new-session-request s) "type"))
+    "new_session")
+  
+  ;; Get state request
+  (check-equal? "get-state request has correct type"
+    (let ([s (make-test-session)])
+      (hash-ref (pi-make-get-state-request s) "type"))
+    "get_state")
+  
+  ;; Switch session request
+  (check-equal? "switch-session request has correct type"
+    (let ([s (make-test-session)])
+      (hash-ref (pi-make-switch-session-request s "/path/to/session") "type"))
+    "switch_session")
+  
+  (check-equal? "switch-session request has path"
+    (let ([s (make-test-session)])
+      (hash-ref (pi-make-switch-session-request s "/path/to/session") "sessionPath"))
+    "/path/to/session")
 )
 
 ;;; ============ Session Utilities Tests ============
@@ -381,6 +427,26 @@
     (format-session-history '(("user" . ("hello"))
                               ("assistant" . ("hi"))))
     "## You\n\nhello\n\n## Assistant\n\nhi\n\n")
+  
+  (check-equal? "get-sessions-dir builds correct path"
+    (get-sessions-dir "/home/jack/git/helix-pi")
+    (string-append (env-var "HOME") "/.pi/agent/sessions/--home-jack-git-helix-pi--"))
+  
+  (check-equal? "resolve-session-path with absolute path"
+    (resolve-session-path "/full/path/to/session.jsonl" "/home/jack")
+    "/full/path/to/session.jsonl")
+  
+  (check-equal? "resolve-session-path with filename"
+    (resolve-session-path "session.jsonl" "/home/jack/project")
+    (string-append (env-var "HOME") "/.pi/agent/sessions/--home-jack-project--/session.jsonl"))
+  
+  (check-equal? "basename extracts filename"
+    (basename "/home/jack/git/helix-pi/file.txt")
+    "file.txt")
+  
+  (check-equal? "basename handles no directory"
+    (basename "file.txt")
+    "file.txt")
 )
 
 ;;; ============ Session State Tests ============
