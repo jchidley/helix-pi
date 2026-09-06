@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "kind": "repo-preflight-disposition",
+  "identity": "github.com/jchidley/helix-pi",
+  "decision": "changes-published",
+  "reviewedCommit": "8536b42ae91093f079aea58880821a77889d8393",
+  "operation": "inspect",
+  "files": {
+    "AGENTS.md": "af6f678d8e984a8f9187fb45b2bd2e3cfd447c2d7331090008b25ccf5f4f10f4",
+    "README.md": "612e018ba23af4ec894964d761bc8d99bb4af8a894cfee1bc28180830633c062",
+    "docs/architecture.md": "296634495646ed7fa2764b58530f34e9cb680c7456fe58afdd4b46926f898681",
+    "docs/commands.md": "327076e547b402530040cb9a83b1213e43d56ece4cda770c89a32c7d5af1d596",
+    "docs/debugging.md": "f35e648fa389ef16bf03a2fa30b220fda4f2c9a59ae96ac7f84c113df8fa6f59",
+    "docs/patterns.md": "4d1e8969f2f7399d390c06da52704fe1ffd1ff9b4ec53fb9ec26cb2d65d8214d",
+    "docs/refactor-session-state.md": "1ada0204d8ea1218b23c1324cc83969bbb881fa9aa40f58efe48e295dc27ba5c",
+    "docs/rpc-improvements.md": "c439837e22d3101a66bcc3ff2ee6cde42b9681437d7485258e3416e55d0b4361",
+    "docs/tutorial.md": "1c0fc450b59a9fa37da9d620bf40ed359fe1b49b50c2a3f2c00582abdc742abb",
+    "steel-helix-development.md": "925ae1636231fdb02096b14db50a25781ef93ba8cce7c0efc0fb2f11f4c4fb03"
+  },
+  "profileId": "4e2f946311539a962f68da645c3a22ac068d8be0022fc08f8ed3cae14331fcc2",
+  "reviewer": "controller-pi-session-01a07795-640e-7529-b8bf-bbdc58622b3e",
+  "summary": "Validated guidance changes are published at the reviewed commit.",
+  "evidenceSummary": [
+    "Validated guidance candidate committed and pushed to main at 8536b42ae91093f079aea58880821a77889d8393; post-publication Repo Preflight reports current.",
+    "Account-wide rollout identity, source scope, disposition, and validation evidence were reconciled."
+  ],
+  "limitations": [
+    "Guidance-only closure against full owned sources/references/tests and installed Pi 0.85.1 RPC documentation; runtime defects explicitly retained.",
+    "Steel unavailable in native Windows and named Debian-Recovered PATH; no Steel suite, custom Helix, Pi child, provider call, live config/session operation or runtime compatibility certification.",
+    "Refresh target/base/privacy and obtain exact publication approval before writes."
+  ],
+  "recordedAt": "2026-09-06T22:49:05.189Z",
+  "publicationApproved": false
+}
