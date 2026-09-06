@@ -1,6 +1,6 @@
 # RPC Improvements Plan
 
-Based on review of `~/git/pi-mono` reference implementation.
+Historical plan based on an earlier `~/git/pi-mono` checkout. The initial missing-response-handler claim, global-state snippets and completion checkmarks below are not current source/compatibility evidence. Core response handlers now exist, but [operating limits](commands.md#operating-limits) remain. Live prompt examples can incur cost and execute tools; they are not routine validation. Clearing ANTHROPIC_API_KEY alone does not disable other authentication/providers/extensions, and --no-session does not isolate them. Use synthetic event fixtures instead unless a concrete live test is authorized.
 
 ## Problem
 

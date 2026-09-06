@@ -4,13 +4,13 @@ Pi coding agent integration for [Helix](https://helix-editor.com/) via [Steel](h
 
 ## Status
 
-✅ **Working** - Streaming responses, session persistence, prompt caching
+**Experimental integration** — source implements streaming, session commands, model/thinking cycling and status, but this is not current Steel/Helix runtime certification or a prompt-cache guarantee. The two buffers are not a full dashboard. Use `:pi-model`, `:pi-thinking` and `:pi-status` for the running child; a separate `pi` CLI process does not control it.
 
-⚠️ **Minimal** - Standard AI tools show version, model, context, shortcuts.
-helix-pi shows two empty buffers (`[pi/input]`, `[pi/output]`) — nothing else.
-Use `pi` CLI directly to change models.
+Read [operating limits](docs/commands.md#operating-limits) first: extension confirmation dialogs are unsupported, displayed session state can be premature, and cleanup does not verify process exit.
 
 ## Prerequisites
+
+Build/install and live configuration changes require explicit setup scope. Preserve the existing toolchain, plugin files and unsaved editor work. The fork/PR recipe below is historical and must be checked against the intended revision; stock `hx` availability does not prove Steel support.
 
 Custom Helix build: [mattwparas/helix](https://github.com/mattwparas/helix) (Steel fork)
 with [PR #8546](https://github.com/helix-editor/helix/pull/8546) (window resize/focus mode).
@@ -20,6 +20,8 @@ cd ~/git/helix && cargo install --path helix-term --locked
 ```
 
 ## Quick Start
+
+Only for an approved live installation, not a documentation review. The copy below can overwrite existing plugin files; inspect exact destinations and preserve them first. Start Helix at the intended project root. Pi inherits cwd and ambient settings/extensions/credentials, and prompts or compaction can incur cost and execute tools. Neither session persistence nor `--no-session` isolates those effects.
 
 ```bash
 mkdir -p ~/.config/helix/cogs/pi

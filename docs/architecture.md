@@ -1,6 +1,6 @@
 # About the Architecture
 
-Design decisions and tradeoffs for integrating pi coding agent with Helix via Steel plugins.
+Historical design options and tradeoffs, not the current implementation contract. The SDK package/path names, direct-SDK goal, send_message examples, read-only/folding/navigation UI and proposed file layout below are retained design history. Current code uses RPC, mutable pi-session plus separate process/UI globals, and simple text buffers. The refactor note is also historical, not a thread-safety proof. Use [commands and operating limits](commands.md) and the actual source for current behavior; do not execute these sketches or adopt their model/setup assumptions as instructions.
 
 This is an **explanation** document (Diátaxis). It discusses the "why" behind design choices.
 

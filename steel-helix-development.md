@@ -1,6 +1,6 @@
 # Steel Development for Helix
 
-Write and debug Steel (Scheme) plugins for the helix editor using the Steel REPL and tmux for interactive development.
+Illustrative Steel/custom-Helix development guide, not a verified current toolchain or mandatory workflow. Read [operating limits](docs/commands.md#operating-limits) before live work. Config writes, editor restart, process launch and private log reads require the relevant explicit scope; documentation changes do not require them. Use an already-provisioned runtime and your own bounded test session. Do not install tooling, change OS or kill unrelated sessions merely because an example assumes tmux.
 
 ## Quick Reference
 
@@ -129,7 +129,7 @@ When unsure of function names, test in REPL:
 (unwrap-ok result)                      ; Extract from Ok
 (child-stdin child)                     ; Get stdin port
 (child-stdout child)                    ; Get stdout port
-(write-line! port str)                  ; Write line
+(#%raw-write-string json port)          ; RPC: raw JSON, then LF and flush
 (read-line-from-port port)              ; Read line (blocking)
 ```
 
@@ -176,14 +176,14 @@ Only available inside Helix, not in standalone REPL:
 (require (prefix-in helix.static. "helix/static.scm"))
 (require "helix/editor.scm")
 
-;; Export the function
-(provide my-command)
-
+;; Define first; export after definitions.
 ;;@doc
 ;; Description shown in command palette
 (define (my-command)
   ;; Your code here
   (set-status! "Command executed!"))
+
+(provide my-command)
 ```
 
 Then restart Helix and use `:my-command`.
@@ -263,14 +263,14 @@ Edit `~/.config/helix/helix.scm`:
 ```scheme
 ;; Add to your existing helix.scm
 
-(provide word-count)
-
 ;;@doc
 ;; Count words in current selection and show in status bar
 (define (word-count)
   (let* ([text (helix.static.current-highlighted-text!)]
          [count (length (split-whitespace text))])
     (set-status! (string-append "Words: " (number->string count)))))
+
+(provide word-count)
 ```
 
 ### Step 5: Test in Helix
@@ -348,13 +348,13 @@ cat ~/git/helix/steel-docs.md
 - **Context**: No direct editor access; functions receive context when called
 
 ```scheme
-;; helix.scm pattern
-(provide my-command)
-
+;; helix.scm pattern; ... is a placeholder, not a complete implementation
 ;;@doc
 ;; Documentation shown in command palette
 (define (my-command)
   ...)
+
+(provide my-command)
 ```
 
 ### init.scm
@@ -435,7 +435,9 @@ Steel can spawn and communicate with external processes, enabling integration wi
 (define pi-out (child-stdout child))
 
 ;; Send JSON command
-(write-line! pi-in "{\"type\": \"get_state\"}")
+(#%raw-write-string "{\"type\": \"get_state\"}" pi-in)
+(#%raw-write-string "\n" pi-in)
+(flush-output-port pi-in)
 
 ;; Read JSON response
 (read-line-from-port pi-out)

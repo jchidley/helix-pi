@@ -1,5 +1,7 @@
 # How to Debug and Test helix-pi
 
+Read [operating limits](commands.md#operating-limits) first. The callback suite is different from a live Pi/editor run. Use already-provisioned Steel; report a missing runtime rather than installing it silently. Historical counts and sample transcripts below are not a current test result.
+
 ## Run the Test Suite
 
 ```bash
@@ -45,7 +47,7 @@ Commands:
   <text>              Send as prompt
 ```
 
-If something breaks in Helix, reproduce it here first to determine if it's a pi-core.scm issue or Helix integration issue.
+Only use this client for a specifically authorized live diagnostic. It starts Pi with ambient settings/credentials and has blocking-I/O/confirmation/response-correlation limits; it is not a mandatory preliminary step or an unattended test harness. Start with source and synthetic fixtures when they answer the question.
 
 ## Test Functions Interactively
 
@@ -75,7 +77,7 @@ Add `displayln` statements to see output there.
 
 ## Capture Startup Errors
 
-Steel compilation errors scroll by too fast. Use tmux:
+For an authorized custom-Helix startup diagnostic, this is a Bash/tmux example, not proof of isolation from live editor configuration. Use only the session/socket created for that diagnostic; do not kill unrelated sessions. A missing tmux or custom Helix is a prerequisite, not permission to install or switch operating environments. Logs may contain private data.
 
 ```bash
 SESSION="$(date +%s%N | sha256sum | head -c 6)"
@@ -102,6 +104,6 @@ tmux -S "$SOCKET" kill-session -t "$SESSION"
 1. Write logic in `pi-core.scm` (no helix imports)
 2. Write tests in `tests/pi-core-test.scm`
 3. Run `steel test tests/` until green
-4. Test with `steel src/pi-stdio.scm` (no Helix needed)
-5. Deploy: `cp src/*.scm ~/.config/helix/cogs/pi/`
-6. Test in Helix; use tmux capture if startup fails
+4. Run a live CLI diagnostic only when needed and explicitly scoped; it may use paid providers, tools and private sessions.
+5. Deploy only with approval for the exact live config destination and overwrite effects; preserve existing files first.
+6. Validate in the intended custom Helix only when runtime changes require it, preserving unsaved work and using synthetic session data. Report unperformed checks.

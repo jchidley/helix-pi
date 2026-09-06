@@ -1,6 +1,6 @@
 # Refactor: Session State Encapsulation
 
-**Status: IMPLEMENTED**
+**Historical refactor record — examples and completion claims are superseded.** Current source has mutable pi-session callbacks and separate *pi-process*, *pi-ui* and *pi-session* globals, not the immutable-return/single-atom design below. The old test count, no-state-leakage and thread-safety claims are not current verification. Preserve this record as rationale; use [operating limits](commands.md#operating-limits) and source before implementation.
 
 ## Problem
 

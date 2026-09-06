@@ -1,6 +1,6 @@
 # Steel Plugin Patterns Reference
 
-Reusable patterns for Helix Steel plugins. Each pattern includes minimal code and references to real implementations.
+Illustrative, version-dependent patterns, not verified drop-in APIs for the installed editor. Read [operating limits](commands.md#operating-limits). Staging, file creation, process launch and live config writes in examples require the relevant task scope; they are not routine review checks. Do not treat callback/atomicity sketches as a thread-safety guarantee.
 
 **Source**: Extracted from [helix-config](https://github.com/mattwparas/helix-config) and community plugins.
 
@@ -58,8 +58,6 @@ The minimal pattern for a typed command.
 (require (prefix-in helix. "helix/commands.scm"))
 (require "helix/misc.scm")
 
-(provide git-add)
-
 ;;@doc
 ;; Add current file to git
 (define (git-add)
@@ -69,6 +67,8 @@ The minimal pattern for a typed command.
   (let* ([focus (editor-focus)]
          [doc-id (editor->doc-id focus)])
     (editor-document->path doc-id)))
+
+(provide git-add)
 ```
 
 ## Pattern: Labelled Buffer
@@ -109,14 +109,14 @@ Show a selection list that opens files or triggers actions.
 ```scheme
 (require "helix/misc.scm")
 
-(provide my-picker)
-
 (define *items* '("item1" "item2" "item3"))
 
 ;;@doc
 ;; Show picker with items
 (define (my-picker)
   (push-component! (picker *items*)))
+
+(provide my-picker)
 ```
 
 For custom behavior, use `new-component!`:

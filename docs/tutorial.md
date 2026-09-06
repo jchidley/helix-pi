@@ -1,6 +1,6 @@
 # Tutorial: Your First Pi Session in Helix
 
-This tutorial walks you through installing and using helix-pi for the first time.
+This is a historical installation walkthrough for an explicitly approved live setup, not a tested current-version tutorial. Read [operating limits](commands.md#operating-limits) first. Copying/configuring/restarting changes the live editor; prompts and compaction may use paid providers and tools. Preserve plugin/config files and unsaved work, use synthetic inputs, and do not disable confirmation safeguards to work around unsupported RPC dialogs. Alt-p shortcuts apply only after installing the example keybindings in the command reference.
 
 ## Before You Start
 
@@ -14,7 +14,7 @@ Verify pi works:
 pi --version
 ```
 
-You should see version output. If not, install pi first.
+Version output verifies only that binary's presence, not Steel/Helix compatibility or authentication. If prerequisites are missing, arrange setup separately; do not install as part of a guidance review.
 
 ## Step 1: Install the Plugin
 
@@ -109,7 +109,7 @@ Type `:pi-quit` (or `Alt-p q`).
 
 You should see: `pi: stopped (session saved)`
 
-The buffers close and your session is saved.
+That legacy status message is not proof of persistence or child exit. The implementation closes stdin and clears local process state without waiting for the child; buffers remain.
 
 ## Step 8: Resume the Session
 
@@ -121,13 +121,13 @@ This loads your most recent session. Type:
 What was my first request?
 ```
 
-Send with `:pi-send` (or `Alt-p s`). The assistant should remember your earlier conversation because the session was restored with prompt caching.
+Send with `:pi-send` (or `Alt-p s`). Session history restoration and provider prompt caching are different mechanisms. Neither a rendered history nor this example proves the active branch was restored or a cache hit occurred.
 
 ## Step 9: Browse Other Sessions
 
 Type `:pi-quit` to close, then `:pi-resume` (or `Alt-p r`) with an empty input buffer.
 
-You should see a list of available sessions in the output buffer with their paths and timestamps.
+With empty input, the implementation opens a picker, not an output-buffer listing with timestamps. Session discovery has POSIX/path/whitespace limits; verify the selected session and child response before relying on the displayed history.
 
 To resume a specific session, put its path in the input buffer and run `:pi-resume` again.
 
